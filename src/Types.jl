@@ -53,6 +53,7 @@ mutable struct Firm
     realized_sales_history::Vector{Int}
     profit_history::Vector{Float64}
     active::Bool
+    startup_pending::Bool
 end
 
 mutable struct TickEvents
@@ -178,6 +179,12 @@ mutable struct OpenDiagnosticLog
     max_goods_records::Int
 end
 
+mutable struct CommercialBidProposal
+    firm_id::Int
+    lot_id::Int
+    bid::Float64
+end
+
 mutable struct ModelState
     tick::Int
     params::ModelParams
@@ -192,6 +199,7 @@ mutable struct ModelState
     open_diagnostic_log::OpenDiagnosticLog
     consumer_access_by_lot::Vector{Float64}
     job_access_by_lot::Vector{Float64}
+    commercial_bid_buffer::Vector{CommercialBidProposal}
 end
 
 employment_state(w::Worker) = isnothing(w.employer_id) ? Unemployed() : Employed()

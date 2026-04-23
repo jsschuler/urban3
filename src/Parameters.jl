@@ -64,6 +64,10 @@ Base.@kwdef mutable struct ModelParams
     firm_consumer_access_weight::Float64 = 0.08
     firm_job_access_weight::Float64 = 0.03
     firm_employee_commute_weight::Float64 = 0.25
+    commercial_bid_base::Float64 = 1.0
+    commercial_bid_slope::Float64 = 0.35
+    commercial_bid_cap::Float64 = 150.0
+    commercial_rent_bid_adjustment_rate::Float64 = 0.30
     human_capital_start::Float64 = 1.0
     human_capital_gain_per_tick::Float64 = 0.002
     human_capital_max::Float64 = 2.0

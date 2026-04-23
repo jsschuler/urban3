@@ -34,7 +34,7 @@ function log_commercial_space_search!(
     reason = if isnothing(chosen_lot_id)
         isempty(vacant_ids) ? :no_vacant_candidate : :no_choice
     else
-        :selected_lowest_rent_candidate
+        :selected_bid_candidate
     end
 
     push_decision!(state, DecisionRecord(

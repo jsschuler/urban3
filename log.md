@@ -80,6 +80,90 @@ Open. The core unresolved problem is that commercial success is still not spatia
 
 ## Changes
 
+### 2026-04-23: Added minimal periodic commercial bidding for vacant units
+
+Changed the commercial-space allocation mechanism so firms can compete for the
+same vacant commercial lots within a tick instead of immediately occupying the
+best sampled lot in isolation.
+
+Design:
+
+- firms still use bounded staged search to form a sampled candidate set
+- each reviewing firm now submits at most one commercial bid, for its best
+  sampled vacant lot
+- bids are based on gross commercial location value rather than current rent
+- a new bid-resolution phase awards vacant units lot-by-lot to the highest
+  bidders
+- commercial rents now adjust toward the mean winning bid on awarded lots
+- vacancy markdowns remain in place
+- the old automatic commercial full-occupancy rent raise was removed so bidding
+  becomes the primary commercial rent-discovery mechanism
+- newly founded firms that lose a contested first-round bid can still use a
+  bounded global vacant-lot rescue if commercial space remains elsewhere
+
+Implementation:
+
+- added `CommercialBidProposal` and a per-tick bid buffer in model state
+- added gross-value and bid-ceiling logic in `src/Firms.jl`
+- `commercial_space_search!` now submits a bid proposal instead of directly
+  taking space
+- added `resolve_commercial_bids!` after entrepreneurship and expansion reviews
+- updated startup firm handling so entry is confirmed only after securing an
+  initial commercial unit
+- removed the commercial occupied/full rent raise from `src/Developer.jl`
+
+New parameters in `src/Parameters.jl`:
+
+- `commercial_bid_base`
+- `commercial_bid_slope`
+- `commercial_bid_cap`
+- `commercial_rent_bid_adjustment_rate`
+
+Smoke validation:
+
+```text
+Configuration A:
+- width = 12
+- height = 12
+- initial_workers = 40
+- initial_firms = 8
+- ticks = 5
+- seed = 1
+
+Result:
+- initial active firms after bid resolution = 8
+- active firms at tick 5 = 8
+- mean_commercial_rent = 2.7692
+```
+
+```text
+Configuration B:
+- width = 16
+- height = 16
+- initial_workers = 80
+- initial_firms = 12
+- ticks = 20
+- seed = 2
+
+Result:
+- active firms at tick 20 = 11
+- mean_commercial_rent = 1.1083
+- commercial_vacancy_rate = 0.9562
+```
+
+Assessment:
+
+- the minimal bidding mechanism is implemented and runs without runtime errors
+  in smoke tests
+- commercial rent formation is now tied to competing firm bids rather than only
+  local occupancy
+- this has not yet been evaluated on the matched 250-tick and 5000-tick
+  diagnostics used elsewhere in this log
+- the next question is whether the bid calibration is too weak, given the low
+  commercial rents seen in short smoke runs
+- if so, the next levers are likely bid scaling, bid caps, or a more direct
+  expected-revenue basis for bids
+
 ### 2026-04-23: Switched to bounded staged search with commercial rescue
 
 Changed search behavior after the time-local substitute audit showed that extreme commercial-rent spikes were strongly associated with missed cheaper vacant lots available elsewhere in the same tick.

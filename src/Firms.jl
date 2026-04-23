@@ -147,6 +147,14 @@ function best_vacant_commercial_candidate(state::ModelState, f::Firm, candidates
     return best_lot_id, vacant_count
 end
 
+function commercial_location_gross_value(state::ModelState, f::Firm, lot_id::Int)
+    consolidation_bonus = get(f.commercial_units_by_lot, lot_id, 0)
+    return state.params.firm_consumer_access_weight * state.consumer_access_by_lot[lot_id] +
+        state.params.firm_job_access_weight * state.job_access_by_lot[lot_id] +
+        state.params.firm_employee_commute_weight * (-mean_employee_commute_to_lot(state, f, lot_id)) +
+        consolidation_bonus
+end
+
 function mean_employee_commute_to_lot(state::ModelState, f::Firm, lot_id::Int)
     total = 0.0
     count = 0
@@ -163,12 +171,7 @@ end
 
 function commercial_location_score(state::ModelState, f::Firm, lot_id::Int)
     lot = state.lots[lot_id]
-    consolidation_bonus = get(f.commercial_units_by_lot, lot_id, 0)
-    return state.params.firm_consumer_access_weight * state.consumer_access_by_lot[lot_id] +
-        state.params.firm_job_access_weight * state.job_access_by_lot[lot_id] +
-        state.params.firm_employee_commute_weight * (-mean_employee_commute_to_lot(state, f, lot_id)) +
-        consolidation_bonus -
-        lot.commercial_rent
+    return commercial_location_gross_value(state, f, lot_id) - lot.commercial_rent
 end
 
 function cheapest_global_vacant_commercial_lot(state::ModelState, f::Firm)
@@ -236,9 +239,8 @@ function commercial_space_search!(state::ModelState, f::Firm)
     end
 
     if !isnothing(chosen_lot_id)
-        lot = state.lots[chosen_lot_id]
-        lot.occupied_commercial += 1
-        f.commercial_units_by_lot[chosen_lot_id] = get(f.commercial_units_by_lot, chosen_lot_id, 0) + 1
+        bid = commercial_bid_amount(state, f, chosen_lot_id)
+        push!(state.commercial_bid_buffer, CommercialBidProposal(f.id, chosen_lot_id, bid))
         log_commercial_space_search!(state, f, evaluated_candidates, chosen_lot_id)
         log_commercial_search_diagnostic!(state, f, anchor, evaluated_candidates, chosen_lot_id)
         return true
@@ -247,4 +249,85 @@ function commercial_space_search!(state::ModelState, f::Firm)
     log_commercial_space_search!(state, f, evaluated_candidates, nothing)
     log_commercial_search_diagnostic!(state, f, anchor, evaluated_candidates, nothing)
     return false
+end
+
+function commercial_bid_amount(state::ModelState, f::Firm, lot_id::Int)
+    gross_value = commercial_location_gross_value(state, f, lot_id)
+    raw_bid = state.params.commercial_bid_base + state.params.commercial_bid_slope * max(0.0, gross_value)
+    return clamp(raw_bid, state.params.min_commercial_rent, state.params.commercial_bid_cap)
+end
+
+function finalize_pending_startup_firms!(state::ModelState)
+    for f in state.firms
+        !f.active && continue
+        !f.startup_pending && continue
+        if isempty(f.commercial_units_by_lot)
+            rescue_lot_id = cheapest_global_vacant_commercial_lot(state, f)
+            if isnothing(rescue_lot_id)
+                f.active = false
+                f.startup_pending = false
+                continue
+            end
+
+            bid = commercial_bid_amount(state, f, rescue_lot_id)
+            lot = state.lots[rescue_lot_id]
+            lot.occupied_commercial += 1
+            lot.commercial_rent = max(
+                state.params.min_commercial_rent,
+                (1 - state.params.commercial_rent_bid_adjustment_rate) * lot.commercial_rent +
+                    state.params.commercial_rent_bid_adjustment_rate * bid,
+            )
+            f.commercial_units_by_lot[rescue_lot_id] = get(f.commercial_units_by_lot, rescue_lot_id, 0) + 1
+        else
+        end
+        f.startup_pending = false
+        state.events.firm_entries += 1
+    end
+end
+
+function resolve_commercial_bids!(state::ModelState)
+    bids = state.commercial_bid_buffer
+    if isempty(bids)
+        finalize_pending_startup_firms!(state)
+        return
+    end
+
+    bids_by_lot = Dict{Int,Vector{CommercialBidProposal}}()
+    for proposal in bids
+        push!(get!(bids_by_lot, proposal.lot_id, CommercialBidProposal[]), proposal)
+    end
+
+    for (lot_id, lot_bids) in bids_by_lot
+        vacant_units = vacant_commercial(state.lots[lot_id])
+        vacant_units <= 0 && continue
+        sort!(lot_bids; by=proposal -> (-proposal.bid, proposal.firm_id))
+        award_count = min(vacant_units, length(lot_bids))
+        award_count == 0 && continue
+
+        winners = lot_bids[1:award_count]
+        lot = state.lots[lot_id]
+        lot.occupied_commercial += award_count
+
+        winning_bids = Float64[]
+        for proposal in winners
+            push!(winning_bids, proposal.bid)
+            firm = state.firms[proposal.firm_id]
+            firm.active || continue
+            firm.commercial_units_by_lot[lot_id] = get(firm.commercial_units_by_lot, lot_id, 0) + 1
+            if firm.startup_pending
+                firm.startup_pending = false
+                state.events.firm_entries += 1
+            end
+        end
+
+        mean_bid = mean(winning_bids)
+        α = state.params.commercial_rent_bid_adjustment_rate
+        lot.commercial_rent = max(
+            state.params.min_commercial_rent,
+            (1 - α) * lot.commercial_rent + α * mean_bid,
+        )
+    end
+
+    empty!(state.commercial_bid_buffer)
+    finalize_pending_startup_firms!(state)
 end

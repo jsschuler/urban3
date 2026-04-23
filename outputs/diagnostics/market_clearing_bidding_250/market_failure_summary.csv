@@ -1,0 +1,15 @@
+"metric","value"
+"final_population",4982
+"final_employed",4594
+"final_unemployed",388
+"final_housed",4333
+"final_unhoused",649
+"final_vacant_residential_units",768
+"final_vacant_commercial_units",491
+"final_unsold_output",1053
+"max_unhoused",1064
+"max_unemployed",836
+"max_vacant_residential_units",768
+"max_vacant_commercial_units",1484
+"max_unsold_output",1382
+"tick_first_zero_housed",NA

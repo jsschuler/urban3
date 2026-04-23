@@ -1,5 +1,6 @@
 function reset_tick_flags!(state::ModelState)
     state.events = reset_events!()
+    empty!(state.commercial_bid_buffer)
     for w in state.workers
         w.moved_job_this_tick = false
         w.moved_home_this_tick = false
@@ -19,6 +20,7 @@ function step!(state::ModelState)
     refresh_spatial_access!(state)
     firm_contraction_expansion!(state)
     entrepreneurship_phase!(state)
+    resolve_commercial_bids!(state)
     refresh_spatial_access!(state)
     worker_job_search!(state)
     refresh_spatial_access!(state)

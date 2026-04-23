@@ -12,8 +12,6 @@ function developer_update!(state::ModelState)
         if lot.commercial_units > 0
             if vacant_commercial(lot) > 0
                 lot.commercial_rent *= (1 - state.params.commercial_vacancy_rent_cut_rate)
-            elseif lot.occupied_commercial >= lot.commercial_units
-                lot.commercial_rent *= (1 + state.params.commercial_rent_raise_rate)
             end
             lot.commercial_rent = max(state.params.min_commercial_rent, lot.commercial_rent)
         end

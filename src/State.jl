@@ -47,10 +47,12 @@ function init_state(params::ModelParams=ModelParams())
             params.open_diagnostic_goods_limit,
         ),
         zeros(Float64, length(lots)),
-        zeros(Float64, length(lots)))
+        zeros(Float64, length(lots)),
+        CommercialBidProposal[])
     for _ in 1:params.initial_firms
         found_firm!(state, [rand(rng, eachindex(state.workers))]; startup_capital=0.0)
     end
+    resolve_commercial_bids!(state)
     initial_hire!(state)
     initial_house!(state)
     refresh_spatial_access!(state)

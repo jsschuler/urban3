@@ -32,15 +32,12 @@ function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capita
         Int[], Dict{Int,Float64}(),
         2, 1, Dict{Int,Int}(),
         4.0 + rand(state.rng) * 2.0,
-        0, 0, Int[], Float64[], true)
+        0, 0, Int[], Float64[], true, true)
     push!(state.firms, firm)
     for (id, share) in shares
         state.workers[id].ownership_shares[firm_id] = share
     end
-    commercial_space_search!(state, firm) || (firm.active = false)
-    if firm.active
-        state.events.firm_entries += 1
-    end
+    commercial_space_search!(state, firm)
     return firm
 end
 
