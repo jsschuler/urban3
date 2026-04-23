@@ -2,7 +2,7 @@ function developer_update!(state::ModelState)
     for lot in state.lots
         if lot.residential_units > 0
             if vacant_residential(lot) > 0
-                lot.residential_rent *= (1 - state.params.residential_rent_cut_rate)
+                lot.residential_rent *= (1 - state.params.residential_vacancy_rent_cut_rate)
             elseif lot.occupied_residential >= lot.residential_units
                 lot.residential_rent *= (1 + state.params.residential_rent_raise_rate)
             end
@@ -11,7 +11,7 @@ function developer_update!(state::ModelState)
 
         if lot.commercial_units > 0
             if vacant_commercial(lot) > 0
-                lot.commercial_rent *= (1 - state.params.commercial_rent_cut_rate)
+                lot.commercial_rent *= (1 - state.params.commercial_vacancy_rent_cut_rate)
             elseif lot.occupied_commercial >= lot.commercial_units
                 lot.commercial_rent *= (1 + state.params.commercial_rent_raise_rate)
             end

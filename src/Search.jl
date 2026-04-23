@@ -12,9 +12,17 @@ end
 
 lot_id_at(x::Int, y::Int, width::Int) = (y - 1) * width + x
 
-function candidate_lots(state::ModelState, origin::Union{Nothing,Int}, params::SearchParams)
+function candidate_lots(
+    state::ModelState,
+    origin::Union{Nothing,Int},
+    params::SearchParams;
+    domain::Symbol = :generic,
+    actor_kind::Symbol = :unknown,
+    actor_id::Int = 0,
+)
     rng = state.rng
     out = Int[]
+    local_draw_count = 0
     if !isnothing(origin) && rand(rng) <= params.local_weight
         o = state.lots[origin]
         n = max(1, poisson(rng, params.poisson_intensity))
@@ -25,13 +33,26 @@ function candidate_lots(state::ModelState, origin::Union{Nothing,Int}, params::S
                 x = clamp(o.x + dx, 1, state.params.width)
                 y = clamp(o.y + dy, 1, state.params.height)
                 push!(out, lot_id_at(x, y, state.params.width))
+                local_draw_count += 1
             end
         end
     end
     for _ in 1:params.global_samples
         push!(out, rand(rng, eachindex(state.lots)))
     end
-    return unique(out)
+    unique_lots = unique(out)
+    log_search_coverage!(
+        state;
+        domain=domain,
+        actor_kind=actor_kind,
+        actor_id=actor_id,
+        origin_lot_id=origin,
+        raw_lot_ids=out,
+        unique_lot_ids=unique_lots,
+        local_draw_count=local_draw_count,
+        global_draw_count=params.global_samples,
+    )
+    return unique_lots
 end
 
 function worker_anchor_lot(w::Worker, state::ModelState)

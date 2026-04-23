@@ -14,11 +14,12 @@ function step!(state::ModelState)
     consumption_phase!(state)
     calculate_profits!(state)
     firm_contraction_expansion!(state)
+    entrepreneurship_phase!(state)
     worker_job_search!(state)
     worker_housing_search!(state)
     developer_update!(state)
-    entrepreneurship_phase!(state)
     outside_entry!(state)
+    record_market_snapshot!(state)
     return state
 end
 

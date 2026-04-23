@@ -35,6 +35,9 @@ function metrics_snapshot(state::ModelState)
         "mean_commute" => isempty(commutes) ? 0.0 : mean(commutes),
         "firm_size_distribution" => [length(f.worker_ids) for f in active],
         "goods_sales_by_type" => sales_by_type(state),
+        "decision_summary" => decision_summary(state),
+        "market_failure_summary" => market_failure_summary(state),
+        "search_coverage_summary" => search_coverage_summary(state),
         "lots" => [lot_dict(l) for l in state.lots],
     )
 end

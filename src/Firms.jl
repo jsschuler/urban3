@@ -127,14 +127,23 @@ end
 
 function commercial_space_search!(state::ModelState, f::Firm)
     anchor = isempty(f.commercial_units_by_lot) ? nothing : first(keys(f.commercial_units_by_lot))
-    candidates = candidate_lots(state, anchor, state.params.commercial_search)
+    candidates = candidate_lots(
+        state,
+        anchor,
+        state.params.commercial_search;
+        domain=:commercial_space,
+        actor_kind=:firm,
+        actor_id=f.id,
+    )
     sort!(candidates; by = lid -> (state.lots[lid].commercial_rent, -get(f.commercial_units_by_lot, lid, 0)))
     for lid in candidates
         lot = state.lots[lid]
         vacant_commercial(lot) <= 0 && continue
         lot.occupied_commercial += 1
         f.commercial_units_by_lot[lid] = get(f.commercial_units_by_lot, lid, 0) + 1
+        log_commercial_space_search!(state, f, candidates, lid)
         return true
     end
+    log_commercial_space_search!(state, f, candidates, nothing)
     return false
 end

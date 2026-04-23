@@ -122,6 +122,10 @@ canvas { width: 100%; background: #0d1113; border: 1px solid var(--line); border
         <div class="field"><label>Res add</label><input id="p-residential_add_prob" type="number" value="0.01" min="0" max="1" step="0.001"></div>
         <div class="field"><label>Com add</label><input id="p-commercial_add_prob" type="number" value="0.006" min="0" max="1" step="0.001"></div>
       </div>
+      <div class="row">
+        <div class="field"><label>Res vacancy cut</label><input id="p-residential_vacancy_rent_cut_rate" type="number" value="0.05" min="0" max="1" step="0.01"></div>
+        <div class="field"><label>Com vacancy cut</label><input id="p-commercial_vacancy_rent_cut_rate" type="number" value="0.15" min="0" max="1" step="0.01"></div>
+      </div>
       <div class="field"><label>Blender update ticks</label><input id="p-blender_update_every" type="number" value="5" min="0"></div>
       <div class="controls">
         <button onclick="sendParams()">Apply</button>

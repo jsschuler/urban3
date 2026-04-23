@@ -22,7 +22,14 @@ end
 
 function choose_good(w::Worker, state::ModelState, remaining::Dict{Int,Int}, budget::Float64)
     origin = worker_anchor_lot(w, state)
-    sampled_lots = candidate_lots(state, origin, state.params.goods_search)
+    sampled_lots = candidate_lots(
+        state,
+        origin,
+        state.params.goods_search;
+        domain=:goods,
+        actor_kind=:worker,
+        actor_id=w.id,
+    )
     best_id = nothing
     best_score = -Inf
     for f in active_firms(state)
@@ -79,7 +86,14 @@ end
 
 function best_job(w::Worker, state::ModelState)
     origin = worker_anchor_lot(w, state)
-    sampled = candidate_lots(state, origin, state.params.job_search)
+    sampled = candidate_lots(
+        state,
+        origin,
+        state.params.job_search;
+        domain=:job,
+        actor_kind=:worker,
+        actor_id=w.id,
+    )
     best_id = nothing
     best_net = -Inf
     for f in active_firms(state)
@@ -146,7 +160,14 @@ end
 
 function move_to_best_home!(w::Worker, state::ModelState; current_required::Bool)
     origin = worker_anchor_lot(w, state)
-    candidates = candidate_lots(state, origin, state.params.housing_search)
+    candidates = candidate_lots(
+        state,
+        origin,
+        state.params.housing_search;
+        domain=:housing,
+        actor_kind=:worker,
+        actor_id=w.id,
+    )
     best_lot = nothing
     best_u = current_required && !isnothing(w.dwelling_lot_id) ? home_utility(w, state, w.dwelling_lot_id) : -Inf
     for lid in candidates

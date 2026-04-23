@@ -22,7 +22,10 @@ function init_state(params::ModelParams=ModelParams())
         id += 1
     end
     workers = [draw_worker(i, params, rng) for i in 1:params.initial_workers]
-    state = ModelState(0, params, rng, lots, workers, Firm[], reset_events!())
+    state = ModelState(0, params, rng, lots, workers, Firm[], reset_events!(),
+        init_decision_log(params.decision_log_limit),
+        init_market_log(params.market_log_limit),
+        init_search_coverage_log(params.search_log_limit))
     for _ in 1:params.initial_firms
         found_firm!(state, [rand(rng, eachindex(state.workers))]; startup_capital=0.0)
     end

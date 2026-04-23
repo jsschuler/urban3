@@ -61,6 +61,77 @@ mutable struct TickEvents
     outside_entries::Int
 end
 
+mutable struct DecisionRecord
+    tick::Int
+    actor_kind::Symbol
+    actor_id::Int
+    decision::Symbol
+    considered_count::Int
+    viable_count::Int
+    chosen_kind::Symbol
+    chosen_id::Union{Nothing,Int}
+    reason::Symbol
+    min_candidate_value::Float64
+    max_candidate_value::Float64
+end
+
+mutable struct DecisionLog
+    records::Vector{DecisionRecord}
+    max_records::Int
+    commercial_vacant_considered_counts::Dict{Int,Int}
+    commercial_vacant_chosen_counts::Dict{Int,Int}
+end
+
+mutable struct MarketSnapshot
+    tick::Int
+    population::Int
+    employed::Int
+    unemployed::Int
+    housed::Int
+    unhoused::Int
+    residential_units::Int
+    vacant_residential_units::Int
+    commercial_units::Int
+    vacant_commercial_units::Int
+    active_firms::Int
+    firm_job_vacancies::Int
+    firms_with_job_vacancies::Int
+    committed_output::Int
+    realized_sales::Int
+    unsold_output::Int
+    sold_out_firms::Int
+    mean_wage::Float64
+    mean_residential_rent::Float64
+    mean_commercial_rent::Float64
+    mean_goods_price::Float64
+end
+
+mutable struct MarketLog
+    records::Vector{MarketSnapshot}
+    max_records::Int
+end
+
+mutable struct SearchCoverageRecord
+    tick::Int
+    domain::Symbol
+    actor_kind::Symbol
+    actor_id::Int
+    origin_lot_id::Union{Nothing,Int}
+    raw_draw_count::Int
+    unique_lot_count::Int
+    local_draw_count::Int
+    global_draw_count::Int
+end
+
+mutable struct SearchCoverageLog
+    records::Vector{SearchCoverageRecord}
+    max_records::Int
+    lot_counts_by_domain::Dict{Symbol,Dict{Int,Int}}
+    event_counts_by_domain::Dict{Symbol,Int}
+    raw_draw_counts_by_domain::Dict{Symbol,Int}
+    unique_draw_counts_by_domain::Dict{Symbol,Int}
+end
+
 mutable struct ModelState
     tick::Int
     params::ModelParams
@@ -69,6 +140,9 @@ mutable struct ModelState
     workers::Vector{Worker}
     firms::Vector{Firm}
     events::TickEvents
+    decision_log::DecisionLog
+    market_log::MarketLog
+    search_log::SearchCoverageLog
 end
 
 employment_state(w::Worker) = isnothing(w.employer_id) ? Unemployed() : Employed()
@@ -80,4 +154,23 @@ taxicab(a::Lot, b::Lot) = abs(a.x - b.x) + abs(a.y - b.y)
 
 function reset_events!()
     TickEvents(0, 0, 0, 0, 0, 0, 0, 0)
+end
+
+function init_decision_log(limit::Int)
+    DecisionLog(DecisionRecord[], limit, Dict{Int,Int}(), Dict{Int,Int}())
+end
+
+function init_market_log(limit::Int)
+    MarketLog(MarketSnapshot[], limit)
+end
+
+function init_search_coverage_log(limit::Int)
+    SearchCoverageLog(
+        SearchCoverageRecord[],
+        limit,
+        Dict{Symbol,Dict{Int,Int}}(),
+        Dict{Symbol,Int}(),
+        Dict{Symbol,Int}(),
+        Dict{Symbol,Int}(),
+    )
 end

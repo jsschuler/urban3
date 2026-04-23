@@ -31,7 +31,7 @@ Base.@kwdef mutable struct ModelParams
     goods_search::SearchParams = SearchParams()
     job_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=5, global_samples=10)
     housing_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=5, global_samples=10)
-    commercial_search::SearchParams = SearchParams(poisson_intensity=4.0, radius=5, global_samples=8)
+    commercial_search::SearchParams = SearchParams(poisson_intensity=8.0, radius=12, global_samples=48, local_weight=0.45)
 
     firm_types::Vector{FirmTypeParams} = [FirmTypeParams(), FirmTypeParams(productivity=3.4), FirmTypeParams(productivity=4.8)]
     price_raise_rate::Float64 = 0.04
@@ -60,6 +60,8 @@ Base.@kwdef mutable struct ModelParams
     residential_rent_cut_rate::Float64 = 0.03
     commercial_rent_raise_rate::Float64 = 0.03
     commercial_rent_cut_rate::Float64 = 0.03
+    residential_vacancy_rent_cut_rate::Float64 = 0.05
+    commercial_vacancy_rent_cut_rate::Float64 = 0.15
     residential_add_prob::Float64 = 0.010
     commercial_add_prob::Float64 = 0.006
     conversion_prob::Float64 = 0.004
@@ -75,4 +77,11 @@ Base.@kwdef mutable struct ModelParams
 
     outside_entry_rate::Float64 = 3.0
     blender_update_every::Int = 5
+
+    enable_decision_logging::Bool = true
+    decision_log_limit::Int = 20_000
+    enable_market_logging::Bool = true
+    market_log_limit::Int = 100_000
+    enable_search_logging::Bool = true
+    search_log_limit::Int = 100_000
 end

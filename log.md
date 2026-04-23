@@ -1,0 +1,911 @@
+# Urban ABM Problem and Change Log
+
+## Open Issues
+
+### 2026-04-22: Commercial rents blow up despite high commercial vacancy
+
+Observed during a larger headless stress test:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+
+Results:
+- population = 4998
+- employment = 2120
+- unemployment = 2878
+- unhoused = 2883
+- firm_count = 127
+- residential_vacancy_rate = 0.4865
+- commercial_vacancy_rate = 0.8934
+- mean_residential_rent = 1.1751
+- mean_commercial_rent = 104.5185
+- mean_commute = 2.8022
+```
+
+Problem:
+
+Commercial rents rose sharply even though aggregate commercial vacancy remained very high. This suggests a mismatch between local rent updates, firm commercial-space search, and spatial consolidation behavior. Occupied commercial lots can become extremely expensive while unused commercial space elsewhere remains underused.
+
+Likely areas to inspect:
+
+- `developer_update!` commercial rent adjustment rule
+- `commercial_space_search!` candidate ranking and consolidation preference
+- commercial search may be too conservative, causing firms to miss abundant vacant commercial space outside their narrow sampled neighborhoods
+- firm expansion behavior that adds commercial demand
+- whether firms should relocate or abandon expensive commercial units
+- whether commercial rent increases need a cap, dampening, or local vacancy smoothing
+
+Status: open.
+
+## Changes
+
+### 2026-04-22: Hypothesis added for commercial rent blow-up
+
+Added working hypothesis that commercial-space search is too conservative. Next test should loosen commercial search radius/global sampling and compare against the 250-tick stress-test baseline.
+
+### 2026-04-22: Widened commercial-space search defaults
+
+Changed `commercial_search` defaults in `src/Parameters.jl`:
+
+```text
+Before:
+- poisson_intensity = 4.0
+- radius = 5
+- global_samples = 8
+- local_weight = 0.75
+
+After:
+- poisson_intensity = 8.0
+- radius = 12
+- global_samples = 48
+- local_weight = 0.45
+```
+
+Matched stress-test comparison:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+
+Before:
+- mean_commercial_rent = 104.5185
+- commercial_vacancy_rate = 0.8934
+- firm_count = 127
+- firm_entries = 9
+- firm_exits = 4
+
+After:
+- mean_commercial_rent = 69.9972
+- commercial_vacancy_rate = 0.8992
+- firm_count = 123
+- firm_entries = 4
+- firm_exits = 11
+```
+
+Assessment:
+
+Wider search reduced the commercial-rent blow-up materially but did not resolve it. The remaining issue likely involves local occupied-lot rent escalation plus weak relocation/abandonment behavior for expensive commercial units.
+
+### 2026-04-22: Added compact in-model decision logging
+
+Added `DecisionLog` and `DecisionRecord` structures to model state.
+
+Design:
+
+- keep a bounded rolling list of compact decision records
+- keep aggregate counters for exact audit questions
+- avoid storing full verbose traces for every tick
+
+Initial instrumented decision:
+
+- `commercial_space_search`
+
+Captured fields:
+
+- tick
+- actor kind and id
+- decision type
+- number of candidates considered
+- number of viable/vacant candidates
+- chosen kind and id
+- reason code
+- min/max candidate rent
+
+Aggregate commercial-space counters:
+
+- vacant commercial lot considered count by lot id
+- vacant commercial lot chosen count by lot id
+
+New query:
+
+```julia
+vacant_commercial_lot_considered(state, lot_id)
+```
+
+Focused test:
+
+```text
+Configuration:
+- width = 12
+- height = 12
+- initial_workers = 80
+- initial_firms = 8
+- outside_entry_rate = 1.0
+- ticks = 25
+- seed = 21
+
+Result:
+- retained commercial-search records = 9
+- vacant commercial lots considered = 139
+- vacant commercial-lot consideration events = 346
+- vacant commercial lots chosen = 9
+```
+
+### 2026-04-22: Commercial vacant-lot consideration audit
+
+Ran matched large test after adding decision logging:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+
+Results:
+- mean_commercial_rent = 69.9972
+- commercial_vacancy_rate = 0.8992
+- retained decision records = 2138
+- commercial vacant lots considered = 1596
+- commercial vacant-lot consideration events = 74603
+- commercial vacant lots chosen = 1135
+- currently vacant commercial lots = 1182
+- currently vacant commercial lots never considered = 0
+- vacant-lot consideration count range = 1 to 91
+- mean consideration count among considered lots = 46.7437
+```
+
+High-rent vacant commercial lots were still considered:
+
+```text
+lot_id : rent : vacant_units : consideration_count
+10   : 5383.77 : 1 : 11
+1238 : 5240.05 : 1 : 5
+1296 : 3718.87 : 1 : 4
+1215 : 2792.22 : 1 : 10
+1552 : 1623.65 : 1 : 8
+```
+
+Assessment:
+
+The issue is not that vacant commercial lots are never considered. Current evidence points instead to rent path dependence: lots can become extremely expensive while occupied/full, then become vacant later and only decay gradually under the current rent update rule.
+
+### 2026-04-22: Added explicit vacancy rent markdown parameters
+
+Added dedicated per-tick vacancy markdown parameters:
+
+```text
+residential_vacancy_rent_cut_rate = 0.05
+commercial_vacancy_rent_cut_rate = 0.15
+```
+
+Rule:
+
+If a lot has any vacant units of a use type during the developer update, rent for that use type is multiplied by `1 - vacancy_rent_cut_rate` for that tick.
+
+This makes the vacancy markdown explicit and separates it from the full-occupancy rent increase parameter.
+
+Matched large test:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+
+Result after vacancy markdown:
+- population = 4974
+- employment = 2113
+- unhoused = 2853
+- firm_count = 128
+- mean_commercial_rent = 73.8066
+- commercial_vacancy_rate = 0.8991
+- mean_residential_rent = 1.0866
+```
+
+Highest-rent currently vacant commercial lots after the change:
+
+```text
+lot_id : rent : vacant_units
+1552 : 1372.24 : 1
+560  : 431.13  : 1
+1143 : 245.58  : 1
+460  : 15.82   : 1
+431  : 11.64   : 1
+```
+
+Assessment:
+
+The new rule reduced the extreme vacant-lot rent tail substantially compared with the prior audit, where top vacant commercial rents exceeded 5000. Mean commercial rent remains elevated because occupied high-rent lots still contribute to the average.
+
+### 2026-04-22: Rent-distance gradient diagnostic
+
+Question:
+
+Are rents decaying away from the center?
+
+Matched large test:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Geometric-center correlations:
+
+```text
+residential rent vs distance from geometric center = 0.0184
+commercial rent vs distance from geometric center = 0.0275
+residential occupancy vs distance from geometric center = -0.0109
+commercial occupancy vs distance from geometric center = 0.0063
+```
+
+Endogenous-center correlations:
+
+```text
+residential occupancy centroid = (20.50, 18.55)
+commercial occupancy centroid = (21.55, 19.25)
+
+residential rent vs distance from residential centroid = -0.0067
+commercial rent vs distance from commercial centroid = 0.0309
+residential rent vs distance from commercial centroid = 0.0075
+commercial rent vs distance from residential centroid = 0.0228
+```
+
+Assessment:
+
+No meaningful rent decay away from either the geometric center or endogenous occupancy centroids. Current rent patterns are dominated by local occupancy/rent path dynamics, not by a central-place gradient.
+
+### 2026-04-22: Long-run stress test for central tendencies
+
+Question:
+
+Was the previous model run too short for center/rent-gradient tendencies to emerge?
+
+Long-run test:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 3000
+- initial_firms = 150
+- outside_entry_rate = 2.0
+- ticks = 5000
+- seed = 77
+- decision logging = off
+
+Runtime:
+- elapsed = 228.694 seconds
+```
+
+Checkpoints:
+
+```text
+tick 100  : population = 3209,  employment = 2627, unhoused = 944,   firms = 160, mean_res_rent = 2.796, mean_com_rent = 5.369
+tick 500  : population = 3987,  employment = 2609, unhoused = 1547,  firms = 152, mean_res_rent = 1.033, mean_com_rent = 24121.158
+tick 1000 : population = 5022,  employment = 2637, unhoused = 4898,  firms = 149, mean_res_rent = 1.000, mean_com_rent = 363.237
+tick 2000 : population = 7040,  employment = 2680, unhoused = 7040,  firms = 149, mean_res_rent = 1.000, mean_com_rent = 18.094
+tick 3000 : population = 9056,  employment = 2673, unhoused = 9056,  firms = 150, mean_res_rent = 1.000, mean_com_rent = 54.618
+tick 4000 : population = 11038, employment = 2677, unhoused = 11038, firms = 149, mean_res_rent = 1.000, mean_com_rent = 2.595
+tick 5000 : population = 13018, employment = 2682, unhoused = 13018, firms = 151, mean_res_rent = 1.000, mean_com_rent = 1.025
+```
+
+Final diagnostics:
+
+```text
+population = 13018
+employment = 2682
+unemployment = 10336
+unhoused = 13018
+firm_count = 151
+firm_entries = 2
+firm_exits = 0
+residential_units = 5340
+commercial_units = 2608
+residential_vacancy_rate = 1.0
+commercial_vacancy_rate = 0.6258
+mean_wage = 1.0010
+mean_residential_rent = 1.0
+mean_commercial_rent = 1.0249
+mean_price = 0.4246
+mean_commute = 0.0
+```
+
+R rent-gradient diagnostics:
+
+```text
+residential rent vs geometric center distance = NA
+commercial rent vs geometric center distance = -0.0078
+residential rent vs residential occupancy centroid distance = NA
+commercial rent vs residential occupancy centroid distance = -0.0078
+residential rent vs commercial occupancy centroid distance = NA
+commercial rent vs commercial occupancy centroid distance = -0.0091
+```
+
+Output files:
+
+```text
+outputs/diagnostics/lots_long_5000.csv
+outputs/diagnostics/rent_gradient_long_5000/
+```
+
+Assessment:
+
+The longer run did not produce a central rent gradient. Instead it revealed a more serious long-run collapse:
+
+- all workers become unhoused
+- residential vacancy reaches 100%
+- residential rents fall to the minimum
+- wages fall to approximately the minimum
+- commute distance becomes zero because nobody is housed
+
+This suggests the next issue is not run length. The model needs investigation of the worker housing/search/affordability transition and the wage/firm demand dynamics that eventually make housing unoccupied even at minimum rent.
+
+### 2026-04-22: Added market-clearing time-series logging
+
+Added `MarketLog` and `MarketSnapshot` to model state.
+
+Tracked each tick:
+
+- population, employed, unemployed, housed, unhoused
+- residential units and vacant residential units
+- commercial units and vacant commercial units
+- active firms
+- firm job vacancies and firms with vacancies
+- committed output, realized sales, unsold output, sold-out firms
+- mean wage, residential rent, commercial rent, and goods price
+
+Added query/export helpers:
+
+```julia
+market_failure_summary(state)
+write_market_log_csv(state, path)
+```
+
+Added R diagnostics:
+
+```text
+diagnostics/market_clearing_diagnostics.R
+```
+
+Generated plots:
+
+- worker state counts
+- housing market non-clearing
+- labor market non-clearing
+- commercial-space excess supply
+- goods market non-clearing
+- prices over time
+- rates over time
+
+Smoke test:
+
+```text
+Configuration:
+- width = 10
+- height = 10
+- initial_workers = 50
+- initial_firms = 8
+- outside_entry_rate = 1.0
+- ticks = 50
+- seed = 51
+
+Final market failure summary:
+- labor_excess_supply = 36
+- labor_excess_demand = 52
+- housing_excess_supply = 58
+- housing_excess_demand = 37
+- commercial_space_excess_supply = 88
+- goods_excess_supply = 25
+```
+
+Long-run rerun with market logging:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 3000
+- initial_firms = 150
+- outside_entry_rate = 2.0
+- ticks = 5000
+- seed = 77
+- decision logging = off
+- market logging = on
+
+Runtime:
+- elapsed = 228.19 seconds
+- market log records = 5000
+```
+
+Checkpoints:
+
+```text
+tick 100  : pop = 3209,  employed = 2627, housed = 2265, unhoused = 944,   vacant_res = 810,  job_vacancies = 253, unsold = 261
+tick 500  : pop = 3987,  employed = 2609, housed = 2440, unhoused = 1547,  vacant_res = 2892, job_vacancies = 127, unsold = 440
+tick 1000 : pop = 5022,  employed = 2637, housed = 124,  unhoused = 4898,  vacant_res = 5408, job_vacancies = 45,  unsold = 561
+tick 2000 : pop = 7040,  employed = 2680, housed = 0,    unhoused = 7040,  vacant_res = 5436, job_vacancies = 2,   unsold = 499
+tick 3000 : pop = 9056,  employed = 2673, housed = 0,    unhoused = 9056,  vacant_res = 5388, job_vacancies = 27,  unsold = 518
+tick 4000 : pop = 11038, employed = 2677, housed = 0,    unhoused = 11038, vacant_res = 5351, job_vacancies = 5,   unsold = 598
+tick 5000 : pop = 13018, employed = 2682, housed = 0,    unhoused = 13018, vacant_res = 5340, job_vacancies = 36,  unsold = 623
+```
+
+R market-clearing summary:
+
+```text
+final_population = 13018
+final_employed = 2682
+final_unemployed = 10336
+final_housed = 0
+final_unhoused = 13018
+final_vacant_residential_units = 5340
+final_vacant_commercial_units = 1632
+final_unsold_output = 623
+max_vacant_residential_units = 5500
+tick_first_zero_housed = 1315
+```
+
+Output files:
+
+```text
+outputs/diagnostics/market_log_long_5000.csv
+outputs/diagnostics/lots_long_5000_marketlog.csv
+outputs/diagnostics/market_clearing_long_5000/
+```
+
+Assessment:
+
+The market log localizes the long-run failure. Housing market fails with simultaneous excess supply and excess demand:
+
+- thousands of vacant residential units
+- all workers unhoused by tick 1315
+- residential rent at minimum
+
+Labor market also fails by excess labor supply:
+
+- unemployment grows with outside entry
+- firm job vacancies are near zero after tick 2000
+
+Goods market retains unsold output, but this appears secondary to the housing/labor collapse.
+
+### 2026-04-22: Firm revenue stability diagnostic
+
+Question:
+
+Is firm revenue statistically stable enough to reason from, or is instability/churn upstream of the broader market failures?
+
+Added exporter:
+
+```text
+scripts/export_firm_revenue_data.jl
+```
+
+Added R diagnostics:
+
+```text
+diagnostics/firm_revenue_stability.R
+```
+
+Tracked per firm per tick:
+
+- workers, capital units, process count, commercial units
+- goods price
+- committed output, realized sales, unsold output, sold-out flag
+- revenue
+- wage bill, rent bill, profit
+
+Generated plots:
+
+- total firm revenue over time
+- cross-firm revenue coefficient of variation
+- zero-revenue share
+- sold-out share
+- revenue concentration
+- loss-firm share
+- firm revenue CV distribution
+- firm zero-revenue share distribution
+- firm observed lifetime distribution
+- continuing-firm revenue CV distribution
+
+Run:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 3000
+- initial_firms = 150
+- outside_entry_rate = 2.0
+- ticks = 2000
+- seed = 77
+```
+
+Checkpoints:
+
+```text
+tick 100  : firms = 160, mean_revenue = 69.216, cv_revenue = 0.826
+tick 500  : firms = 152, mean_revenue = 46.086, cv_revenue = 1.203
+tick 1000 : firms = 149, mean_revenue = 17.295, cv_revenue = 1.093
+tick 2000 : firms = 149, mean_revenue = 10.878, cv_revenue = 1.185
+```
+
+R summary:
+
+```text
+ticks = 2000
+firm_rows = 302474
+unique_firms = 4575
+final_active_firms = 149
+final_total_revenue = 1620.7594
+final_mean_revenue = 10.8776
+final_cv_revenue = 1.1850
+final_zero_revenue_share = 0.0
+final_sold_out_share = 0.5235
+mean_total_revenue = 4349.7964
+cv_total_revenue_over_time = 0.7580
+median_firm_cv_revenue = 0.9799
+median_firm_zero_revenue_share = 1.0
+median_firm_lag1_revenue_corr = 0.9343
+mean_revenue_gini = 0.4104
+```
+
+Firm lifetime audit:
+
+```text
+unique firms observed = 4575
+median observed lifetime = 1 tick
+mean observed lifetime = 66.11 ticks
+share with lifetime 1 tick = 0.9672
+share with lifetime <= 5 ticks = 0.9672
+share with lifetime >= 100 ticks = 0.0326
+share with lifetime >= 1000 ticks = 0.0326
+continuing firms observed >= 100 ticks = 149
+continuing-firm median revenue CV = 0.9805
+continuing-firm median zero-revenue share = 0.0
+```
+
+Assessment:
+
+Revenue is not statistically stable in a strong sense:
+
+- aggregate total revenue has high time-series variation
+- cross-firm revenue CV is usually near or above 1
+- continuing firms have persistent but volatile revenue
+
+More importantly, the diagnostic exposes a firm lifecycle bug:
+
+- almost every non-initial founded firm appears for exactly one tick
+- current scheduler places entrepreneurship after worker job search
+- zero-worker firms then reach the next contraction/liquidation phase before they have a chance to hire
+
+Likely next starting point:
+
+Allow new firms a grace period or move hiring/job-search opportunity before zero-worker liquidation for newly founded firms. Otherwise firm entry mostly creates one-tick firms and does not become meaningful labor demand.
+
+### 2026-04-22: Moved entrepreneurship before worker job search
+
+Changed scheduler order:
+
+```text
+Before:
+1. firm contraction / expansion reviews
+2. worker job search
+3. worker housing search
+4. developer update
+5. entrepreneurship
+6. outside entry
+
+After:
+1. firm contraction / expansion reviews
+2. entrepreneurship
+3. worker job search
+4. worker housing search
+5. developer update
+6. outside entry
+```
+
+Reason:
+
+Newly founded zero-worker firms need to be visible to the same tick's worker job-search phase. Under the prior order, most founded firms were liquidated before they could hire.
+
+Matched 2000-tick firm revenue comparison after scheduler change:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 3000
+- initial_firms = 150
+- outside_entry_rate = 2.0
+- ticks = 2000
+- seed = 77
+```
+
+Checkpoints after change:
+
+```text
+tick 100  : firms = 257, mean_revenue = 81.953,  cv_revenue = 0.823
+tick 500  : firms = 235, mean_revenue = 447.183, cv_revenue = 1.041
+tick 1000 : firms = 305, mean_revenue = 369.154, cv_revenue = 1.045
+tick 2000 : firms = 416, mean_revenue = 246.540, cv_revenue = 0.937
+```
+
+Before/after summary:
+
+```text
+Before:
+- final_active_firms = 149
+- final_total_revenue = 1620.7594
+- final_mean_revenue = 10.8776
+- share_firms_lifetime_1_tick = 0.9672
+- continuing_firms_ge_100_ticks = 149
+- continuing_firm_median_cv_revenue = 0.9805
+
+After:
+- final_active_firms = 416
+- final_total_revenue = 102560.6
+- final_mean_revenue = 246.54
+- share_firms_lifetime_1_tick = 0.7938
+- continuing_firms_ge_100_ticks = 552
+- continuing_firm_median_cv_revenue = 0.6891
+```
+
+Assessment:
+
+The scheduler change materially improves firm survival, labor demand, and revenue stability. It does not fully remove one-tick firm churn, but the failure is much less severe.
+
+### 2026-04-22: Added search-coverage logging
+
+Added `SearchCoverageLog` and `SearchCoverageRecord` to model state.
+
+Tracked per search event:
+
+- tick
+- search domain
+- actor kind and id
+- origin lot id
+- raw draw count
+- unique lot count
+- local draw count
+- global draw count
+
+Aggregate coverage by domain:
+
+- number of search events
+- lots ever sampled
+- share of all lots ever sampled
+- raw draws
+- unique draws
+- mean raw draws per event
+- mean unique lots per event
+
+Added helpers:
+
+```julia
+search_coverage_summary(state)
+write_search_coverage_csv(state, path)
+```
+
+Added R diagnostic:
+
+```text
+diagnostics/search_coverage_diagnostics.R
+```
+
+Post-change 500-tick search coverage run:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 3000
+- initial_firms = 150
+- outside_entry_rate = 2.0
+- ticks = 500
+- seed = 77
+
+Final:
+- population = 3959
+- employment = 3629
+- unemployment = 330
+- unhoused = 337
+- firm_count = 235
+- residential_vacancy_rate = 0.3796
+- mean_wage = 43.2927
+- mean_price = 16.0977
+```
+
+Search coverage:
+
+```text
+domain             events   lots_covered   coverage_share   mean_unique_lots_per_event
+commercial_space     5435           1600        1.0                 47.8773
+goods             4018139           1600        1.0                  9.4545
+housing            314730           1600        1.0                 11.7995
+job                320455           1600        1.0                 11.6835
+```
+
+Assessment:
+
+At 500 ticks, every search domain has sampled every lot at least once. If search failures persist, the next question is less "was the lot ever sampled?" and more "was it sampled by the relevant actor at the relevant time, and was it rejected by affordability/utility/hiring constraints?"
+
+### 2026-04-22: Post-scheduler-fix long-run rerun
+
+Question:
+
+Does the 5000-tick collapse persist after moving entrepreneurship before worker job search?
+
+Run:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 3000
+- initial_firms = 150
+- outside_entry_rate = 2.0
+- ticks = 5000
+- seed = 77
+- decision logging = off
+- search logging = off
+- market logging = on
+
+Runtime:
+- elapsed = 2345.153 seconds
+- market log records = 5000
+```
+
+Checkpoints:
+
+```text
+tick 100  : pop = 3162,  emp = 3007,  housed = 2428,  unhoused = 734,  firms = 257, vacant_res = 641,  job_vacancies = 1619, unsold = 278,  mean_wage = 13.546, mean_price = 5.166
+tick 500  : pop = 3959,  emp = 3629,  housed = 3622,  unhoused = 337,  firms = 235, vacant_res = 2216, job_vacancies = 601,  unsold = 1130, mean_wage = 43.293, mean_price = 16.098
+tick 1000 : pop = 4997,  emp = 4434,  housed = 4446,  unhoused = 551,  firms = 305, vacant_res = 2702, job_vacancies = 1056, unsold = 2196, mean_wage = 38.076, mean_price = 14.877
+tick 2000 : pop = 6948,  emp = 6190,  housed = 6170,  unhoused = 778,  firms = 416, vacant_res = 3057, job_vacancies = 1298, unsold = 3819, mean_wage = 28.906, mean_price = 13.086
+tick 3000 : pop = 8939,  emp = 7703,  housed = 7787,  unhoused = 1152, firms = 511, vacant_res = 3546, job_vacancies = 1495, unsold = 5651, mean_wage = 22.226, mean_price = 10.584
+tick 4000 : pop = 10959, emp = 9493,  housed = 9456,  unhoused = 1503, firms = 623, vacant_res = 4057, job_vacancies = 1721, unsold = 6635, mean_wage = 18.338, mean_price = 9.048
+tick 5000 : pop = 12855, emp = 11306, housed = 11246, unhoused = 1609, firms = 726, vacant_res = 4352, job_vacancies = 1762, unsold = 7662, mean_wage = 14.356, mean_price = 7.652
+```
+
+Final diagnostics:
+
+```text
+population = 12855
+employment = 11306
+unemployment = 1549
+unhoused = 1609
+firm_count = 726
+firm_entries = 2
+firm_exits = 0
+residential_units = 15598
+commercial_units = 14505
+residential_vacancy_rate = 0.2790
+commercial_vacancy_rate = 0.2670
+mean_wage = 14.3565
+mean_residential_rent = 1.0735
+mean_commercial_rent = 224.8861
+mean_price = 7.6523
+mean_commute = 3.2678
+```
+
+Final market-clearing summary:
+
+```text
+labor_excess_supply = 1549
+labor_excess_demand = 1762
+housing_excess_supply = 4352
+housing_excess_demand = 1609
+commercial_space_excess_supply = 3873
+goods_excess_supply = 7662
+goods_sold_out_firms = 393
+```
+
+R market-clearing summary:
+
+```text
+final_housed = 11246
+final_unhoused = 1609
+final_vacant_residential_units = 4352
+final_vacant_commercial_units = 3873
+final_unsold_output = 7662
+max_unhoused = 1807
+max_unemployed = 1905
+max_vacant_residential_units = 4453
+max_vacant_commercial_units = 4018
+max_unsold_output = 7985
+tick_first_zero_housed = NA
+```
+
+R rent-gradient diagnostics:
+
+```text
+geometric center = (20.5, 20.5)
+residential occupancy centroid = (20.972, 20.597)
+commercial occupancy centroid = (20.538, 20.631)
+
+residential rent vs geometric center distance = -0.0393
+commercial rent vs geometric center distance = -0.0196
+residential rent vs residential centroid distance = -0.0410
+commercial rent vs residential centroid distance = -0.0182
+residential rent vs commercial centroid distance = -0.0397
+commercial rent vs commercial centroid distance = -0.0198
+```
+
+Output files:
+
+```text
+outputs/diagnostics/lots_long_5000_post_scheduler.csv
+outputs/diagnostics/market_log_long_5000_post_scheduler.csv
+outputs/diagnostics/market_clearing_long_5000_post_scheduler/
+outputs/diagnostics/rent_gradient_long_5000_post_scheduler/
+```
+
+Assessment:
+
+The earlier all-unhoused long-run collapse does not persist after the scheduler fix. The model now has a much more viable long-run state with high employment and housing occupancy.
+
+Remaining issues:
+
+- commercial rents can still spike locally; mean commercial rent is high
+- goods market has large unsold output even while many firms are sold out
+- housing and labor both show simultaneous excess supply and excess demand
+- rent gradients are still weak; commercial rent remains dominated by local spikes rather than a smooth center gradient
+
+### 2026-04-22: Open question on unsearched substitutes during price/rent spikes
+
+Question:
+
+When commercial rent or goods-price spikes happen, are there relevant substitutes available at that same tick that the searching agents/firms did not sample?
+
+Motivation:
+
+Aggregate search coverage shows that all lots are eventually sampled by each search domain, but that does not answer the relevant market-clearing question. What matters is whether, at the time of a spike, the relevant actor's search set excluded viable substitutes that existed elsewhere.
+
+Needed analysis:
+
+- identify ticks/lots/firms where commercial rent spikes occur
+- identify the relevant firm commercial-space searches near those spikes
+- compare searched candidates against all available vacant commercial substitutes at that tick
+- measure the rent gap between searched choices and unsearched viable alternatives
+- do analogous checks for goods markets where firms are sold out while other firms have unsold substitute goods
+
+Status:
+
+Open diagnostic question. Do not assume aggregate search coverage rules out search failure; analyze time-local substitute availability.

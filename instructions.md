@@ -508,10 +508,21 @@ Residential and commercial rents are lot-specific.
 
 ## 17.3 Rent adjustment
 Use a simple rule:
-- if units are vacant, rent falls
+- if units are vacant, rent falls every tick the vacancy persists
 - if units are full, rent rises
 
-Separate parameters for residential and commercial rent adjustment are recommended.
+Vacancy markdowns must be explicit parameters. Use separate parameters for:
+
+- residential full-occupancy rent increase
+- commercial full-occupancy rent increase
+- residential vacancy rent cut
+- commercial vacancy rent cut
+
+The intended v1 vacancy rule is:
+
+- if a lot has any vacant units of a use type, multiply that use type's rent by `1 - vacancy_rent_cut_rate` during the developer update for that tick
+
+This prevents rents from remaining path-dependent after units become vacant.
 
 ## 17.4 Unit creation
 Residential and commercial units are created **one unit at a time**.
@@ -590,12 +601,14 @@ Use the following within-tick order:
 4. realized firm sales and profit calculation
 5. firm contraction / expansion reviews
 6. layoffs / hiring completion
-7. worker job search
-8. worker housing search
-9. rent updates by master developer
-10. unit additions / conversions
-11. entrepreneurship / coalition formation
+7. entrepreneurship / coalition formation
+8. worker job search
+9. worker housing search
+10. rent updates by master developer
+11. unit additions / conversions
 12. outside entry
+
+Entrepreneurship must occur before worker job search so newly founded firms can participate in the same tick's labor market. Otherwise zero-worker entrants can be liquidated before receiving a hiring opportunity.
 
 Keep this fixed unless later experiments intentionally vary it.
 
@@ -645,6 +658,8 @@ Use this same framework for:
 ## 21.6 Development
 - residential rent adjustment rates
 - commercial rent adjustment rates
+- residential vacancy rent cut rate
+- commercial vacancy rent cut rate
 - unit-addition rates
 - conversion rates
 
@@ -692,6 +707,9 @@ Include useful diagnostics and plots, at minimum:
 - goods sales by type
 - housing stock and commercial stock
 - profit distribution if practical
+- market-clearing time series for labor, housing, commercial space, and goods
+- search coverage by domain for Poisson/local and random/global search processes
+- firm revenue stability and firm lifetime diagnostics
 
 ## 22.4 Spatial plots
 Include useful spatial diagnostics where practical:
@@ -788,6 +806,7 @@ Do not simplify away these design commitments:
 - commercial space as a production input
 - integer capital units
 - firm liquidation at zero workers or zero capital
+- persistent vacancies cut local rent every tick by parameterized vacancy markdown rates
 - only vacant units may be converted
 - no demolition in v1
 - one master developer
