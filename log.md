@@ -44,6 +44,40 @@ Likely areas to inspect:
 
 Status: open.
 
+### 2026-04-23: Commercial center still fails to emerge under current endogenous extensions
+
+Observed after sequential additions of:
+
+- bounded staged search with commercial rescue
+- endogenous residential/job accessibility
+- employee-commute utility in firm location choice
+- probabilistic goods choice
+- shopping habits with review-triggered re-search
+- human capital and workplace-distance social ties
+
+Current issue:
+
+- residential rent gradients now emerge strongly and robustly
+- commercial rent gradients remain near zero in magnitude
+- some extensions reduce mean commercial rents or improve goods absorption, but no tested combination has produced a meaningful endogenous commercial center
+- the human-capital/network mechanism slightly strengthens the commercial gradient signal, but only from very near zero to still-weak values
+
+Most recent evidence:
+
+```text
+Shopping habits:
+- commercial rent vs geometric center distance = -0.0184
+- unsold_output = 472
+
+Human capital + workplace-distance ties:
+- commercial rent vs geometric center distance = -0.0272
+- unsold_output = 777
+```
+
+Status:
+
+Open. The core unresolved problem is that commercial success is still not spatially concentrated enough to generate a durable commercial rent gradient without damaging other parts of market performance.
+
 ## Changes
 
 ### 2026-04-23: Switched to bounded staged search with commercial rescue
@@ -468,6 +502,62 @@ Expectation:
 - worker mobility carries productive relationships across firms
 - nearby employment clusters should preserve network value better than distant ones
 - the model gains a new endogenous mechanism for persistent local agglomeration
+
+Matched rerun after adding human capital and workplace-distance social ties:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 5014
+- employment = 4634
+- firm_count = 378
+- mean_commercial_rent = 81.4072
+- unsold_output = 777
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.6471
+- commercial rent vs geometric center distance = -0.0272
+- residential rent vs residential centroid distance = -0.6521
+- commercial rent vs commercial centroid distance = -0.0253
+```
+
+Comparison against the shopping-habits run:
+
+```text
+Shopping habits:
+- final mean_commercial_rent = 104.1892
+- final unsold_output = 472
+- residential rent vs geometric center distance = -0.6430
+- commercial rent vs geometric center distance = -0.0184
+
+Human capital + workplace-distance ties:
+- final mean_commercial_rent = 81.4072
+- final unsold_output = 777
+- residential rent vs geometric center distance = -0.6471
+- commercial rent vs geometric center distance = -0.0272
+```
+
+Assessment:
+
+- the new productivity mechanism preserved the strong residential gradient
+- it lowered mean commercial rents relative to the shopping-habits run
+- it slightly strengthened the commercial gradient signal, but the effect remains weak
+- goods-market absorption worsened materially relative to the shopping-habits run
+- current evidence suggests human capital and local network persistence may help commercial clustering at the margin, but they are not yet strong enough to generate a meaningful commercial center
 
 ### 2026-04-22: Hypothesis added for commercial rent blow-up
 
