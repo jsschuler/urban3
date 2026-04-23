@@ -3,7 +3,23 @@ function draw_worker(id::Int, params::ModelParams, rng::AbstractRNG)
     u ./= sum(u)
     savings = max(0.0, params.initial_savings_mean + params.initial_savings_sd * randn(rng))
     rate = params.savings_rate_min + rand(rng) * (params.savings_rate_max - params.savings_rate_min)
-    Worker(id, nothing, nothing, 0.0, savings, rate, collect(u), Dict{Int,Float64}(), false, false)
+    Worker(
+        id,
+        nothing,
+        nothing,
+        0.0,
+        savings,
+        rate,
+        collect(u),
+        Dict{Int,Float64}(),
+        Dict{Int,Int}(),
+        Dict{Int,Float64}(),
+        0,
+        params.human_capital_start,
+        Dict{Int,Float64}(),
+        false,
+        false,
+    )
 end
 
 function init_state(params::ModelParams=ModelParams())
@@ -25,12 +41,19 @@ function init_state(params::ModelParams=ModelParams())
     state = ModelState(0, params, rng, lots, workers, Firm[], reset_events!(),
         init_decision_log(params.decision_log_limit),
         init_market_log(params.market_log_limit),
-        init_search_coverage_log(params.search_log_limit))
+        init_search_coverage_log(params.search_log_limit),
+        init_open_diagnostic_log(
+            params.open_diagnostic_commercial_limit,
+            params.open_diagnostic_goods_limit,
+        ),
+        zeros(Float64, length(lots)),
+        zeros(Float64, length(lots)))
     for _ in 1:params.initial_firms
         found_firm!(state, [rand(rng, eachindex(state.workers))]; startup_capital=0.0)
     end
     initial_hire!(state)
     initial_house!(state)
+    refresh_spatial_access!(state)
     return state
 end
 

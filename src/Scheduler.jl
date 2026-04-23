@@ -9,16 +9,23 @@ end
 function step!(state::ModelState)
     reset_tick_flags!(state)
     state.tick += 1
+    refresh_spatial_access!(state)
+    human_capital_phase!(state)
+    social_ties_phase!(state)
     firm_reviews!(state)
     commit_production!(state)
     consumption_phase!(state)
     calculate_profits!(state)
+    refresh_spatial_access!(state)
     firm_contraction_expansion!(state)
     entrepreneurship_phase!(state)
+    refresh_spatial_access!(state)
     worker_job_search!(state)
+    refresh_spatial_access!(state)
     worker_housing_search!(state)
     developer_update!(state)
     outside_entry!(state)
+    refresh_spatial_access!(state)
     record_market_snapshot!(state)
     return state
 end

@@ -46,6 +46,429 @@ Status: open.
 
 ## Changes
 
+### 2026-04-23: Switched to bounded staged search with commercial rescue
+
+Changed search behavior after the time-local substitute audit showed that extreme commercial-rent spikes were strongly associated with missed cheaper vacant lots available elsewhere in the same tick.
+
+Design change:
+
+- searches still begin from the existing local-first sampled process
+- search now widens in bounded stages instead of using one fixed draw
+- each stage increases Poisson search intensity, radius, and global sampling while reducing local anchoring
+- search stops early only if a domain-specific satisficing condition is met
+- commercial-space search has a final bounded global rescue path when staged local/global sampling still fails to find a satisfactory vacant lot
+
+Commercial-space rule:
+
+- require at least a small set of vacant sampled alternatives before accepting the search result
+- for incumbent firms, accept only if the best sampled vacant rent is not too far above the current anchor lot rent
+- otherwise escalate search up to the capped number of stages
+- if the escalated search still has no satisfactory result, pick the cheapest globally vacant commercial lot
+
+Goods rule:
+
+- widen search when the sampled affordable choice set is too thin
+- keep this adaptive logic bounded and lighter than the commercial-space rescue logic
+
+Implementation:
+
+- `SearchParams` now supports bounded escalation controls
+- `adaptive_candidate_lots` added in `src/Search.jl`
+- `commercial_space_search!` now uses staged search plus a global rescue fallback
+- `choose_good` now uses staged search with a minimum affordable-candidate threshold
+
+Expected effect:
+
+- commercial-space search should stop accepting extremely expensive local outcomes when much cheaper vacant space exists elsewhere
+- goods search should reduce false no-choice events caused by thin sampled affordable sets
+
+Matched rerun after the staged-search change:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Before staged search:
+
+```text
+- mean_commercial_rent = 132.4042
+- unsold_output = 1024
+- commercial_with_cheaper_unsampled_share = 0.0998
+- commercial_late_share_with_cheaper_unsampled = 0.2602
+- commercial_high_rent_share_with_cheaper_unsampled = 0.9879
+- goods_no_choice_despite_affordable = 16258
+```
+
+After staged search:
+
+```text
+- mean_commercial_rent = 95.0867
+- unsold_output = 1517
+- commercial_with_cheaper_unsampled_share = 0.1318
+- commercial_late_share_with_cheaper_unsampled = 0.3705
+- commercial_high_rent_share_with_cheaper_unsampled = 0.5675
+- goods_no_choice_despite_affordable = 8044
+```
+
+Assessment:
+
+- the staged search materially reduced the commercial-rent blow-up by tick 250
+- the extreme high-rent commercial tail is less dominated by missed cheaper substitutes than before
+- goods-search false no-choice events were cut roughly in half
+- however, unsold goods increased and commercial vacancy tightened sharply by tick 250, so this is a tradeoff rather than a clean fix
+
+Status:
+
+Promising partial improvement. Keep the issue open and next inspect whether the commercial rescue rule is over-concentrating firms into the cheapest currently vacant space.
+
+### 2026-04-23: Added endogenous accessibility forces for firms, workers, and goods demand
+
+Changed the model to create a minimal endogenous agglomeration loop rather than relying only on rent and current-commute comparisons.
+
+Design:
+
+- goods demand is now spatial through a distance-based shopping cost
+- firms evaluate commercial lots using nearby consumer access and nearby job access, not rent alone
+- worker housing utility now includes nearby job access, not only rent and commute to the current employer
+- these effects are computed from the current state each tick; no center is hard-coded
+
+Implementation:
+
+- added cached lot-level `consumer_access_by_lot` and `job_access_by_lot`
+- added `refresh_spatial_access!` in `src/SpatialAccess.jl`
+- scheduler now refreshes spatial access before goods consumption, commercial-space search, job search, and housing search phases
+- goods choice now uses `goods_price + travel_cost`
+- commercial-space search now ranks vacant lots by access-adjusted location score
+- housing utility now adds a job-access term
+
+New parameters in `src/Parameters.jl`:
+
+- `goods_travel_cost_per_block`
+- `consumer_access_radius`
+- `job_access_radius`
+- `access_distance_decay`
+- `housing_job_access_weight`
+- `firm_consumer_access_weight`
+- `firm_job_access_weight`
+
+Expectation:
+
+- dense residential areas should create stronger nearby demand for firms
+- dense employment areas should create stronger nearby housing demand
+- firms and workers should begin to reinforce accessible locations without imposing an exogenous center
+
+Matched rerun after adding endogenous accessibility:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 5035
+- employment = 4808
+- firm_count = 371
+- mean_commercial_rent = 94.9536
+- unsold_output = 583
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.6648
+- commercial rent vs geometric center distance = -0.0168
+- residential rent vs residential centroid distance = -0.6651
+- commercial rent vs commercial centroid distance = -0.0069
+```
+
+Assessment:
+
+- the new accessibility loop created a strong residential rent gradient
+- commercial rents still do not show a meaningful gradient
+- aggregate market performance improved relative to the staged-search-only run on employment and unsold output
+- however, goods-search no-choice events despite affordable supply increased sharply, so the goods-search side still needs work under the new spatial demand rule
+
+Status:
+
+Residential spatial structure is now emerging endogenously. Commercial spatial structure remains unresolved.
+
+### 2026-04-23: Added employee-commute utility to firm commercial location choice
+
+Changed firm commercial-space evaluation so firms also prefer locations that reduce expected worker commute.
+
+Rule:
+
+- when a firm evaluates candidate commercial lots, its location score now includes a penalty for mean commute distance from current employees' residences to the candidate lot
+- firms with no housed employees fall back to the existing access and rent terms only
+
+Implementation:
+
+- added `firm_employee_commute_weight` in `src/Parameters.jl`
+- added mean employee commute term to `commercial_location_score` in `src/Firms.jl`
+
+Expectation:
+
+- incumbent firms should become less willing to drift into low-rent but labor-inconvenient space
+- this may strengthen the spatial coupling between employment and residential clusters
+- commercial centers, if they emerge, should be more compatible with worker residence patterns rather than only customer access and low rent
+
+Matched rerun after adding the employee-commute term:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 4974
+- employment = 4692
+- firm_count = 361
+- mean_commercial_rent = 85.7895
+- unsold_output = 661
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.6179
+- commercial rent vs geometric center distance = -0.0181
+- residential rent vs residential centroid distance = -0.6236
+- commercial rent vs commercial centroid distance = -0.0171
+```
+
+Comparison against the prior accessibility-only run:
+
+```text
+Accessibility-only:
+- final mean_commercial_rent = 94.9536
+- final unsold_output = 583
+- residential rent vs geometric center distance = -0.6648
+- commercial rent vs geometric center distance = -0.0168
+
+With employee commute term:
+- final mean_commercial_rent = 85.7895
+- final unsold_output = 661
+- residential rent vs geometric center distance = -0.6179
+- commercial rent vs geometric center distance = -0.0181
+```
+
+Assessment:
+
+- the employee-commute term reduced commercial rents further
+- it preserved a strong residential rent gradient
+- it did not produce a meaningful commercial rent gradient
+- current evidence suggests commercial accessibility remains too diffuse or too weakly tied to realized firm revenue for a commercial center to emerge
+
+### 2026-04-23: Switched goods demand from deterministic best-score choice to sampled-set probabilistic choice
+
+Changed the goods-purchase rule to preserve endogeneity while making firm revenue depend more directly on local delivered utility.
+
+Design:
+
+- consumers still search locally first and widen search only in bounded stages
+- purchase choice is now probabilistic over the sampled affordable set rather than a deterministic best-score rule
+- delivered utility depends on consumer taste and total delivered cost, including distance-based travel cost
+- search friction remains in the sampled set construction; it is not imposed again as a separate purchase penalty
+
+Intended behavior:
+
+- nearby firms should gain a persistent demand advantage without hard-coding a center
+- accessible commercial locations should become valuable through realized sales, not only through heuristic access terms
+- local search friction should still matter because firms outside the sampled set cannot be chosen
+
+Matched rerun after the probabilistic-goods change:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 4961
+- employment = 4710
+- firm_count = 359
+- mean_commercial_rent = 107.9943
+- unsold_output = 805
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.6203
+- commercial rent vs geometric center distance = 0.0041
+- residential rent vs residential centroid distance = -0.6230
+- commercial rent vs commercial centroid distance = 0.0036
+```
+
+Comparison against the prior commute-aware run:
+
+```text
+Commute-aware deterministic goods choice:
+- final mean_commercial_rent = 85.7895
+- final unsold_output = 661
+- residential rent vs geometric center distance = -0.6179
+- commercial rent vs geometric center distance = -0.0181
+
+Commute-aware probabilistic goods choice:
+- final mean_commercial_rent = 107.9943
+- final unsold_output = 805
+- residential rent vs geometric center distance = -0.6203
+- commercial rent vs geometric center distance = 0.0041
+```
+
+Assessment:
+
+- the probabilistic-goods rule preserved the strong residential rent gradient
+- it did not generate a commercial rent gradient
+- final commercial rents and unsold output both increased relative to the prior commute-aware run
+- current evidence suggests that sampled-set choice stochasticity alone is not sufficient to create a durable commercial center
+
+### 2026-04-23: Added shopping habits with review-triggered re-search
+
+Changed the goods-demand rule so workers default to habitual suppliers and only re-search when the match deteriorates or a random review fires.
+
+Design:
+
+- workers remember a preferred firm by good type and the last delivered cost paid for that type
+- if the preferred supplier is active, in stock, and still affordable, workers buy from habit by default
+- workers re-search when:
+  - the supplier is inactive or sold out
+  - delivered cost exceeds the stored cost by more than a tolerance
+  - a random shopping review fires
+- fallback search remains local-first and bounded
+
+Intended behavior:
+
+- create persistent customer-firm links without hard-coding market leaders
+- stabilize nearby demand and make accessible commercial locations more valuable through repeat business
+- preserve endogenous switching when a supplier becomes worse
+
+Matched rerun after the shopping-habits change:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 4950
+- employment = 4670
+- firm_count = 364
+- mean_commercial_rent = 104.1892
+- unsold_output = 472
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.6430
+- commercial rent vs geometric center distance = -0.0184
+- residential rent vs residential centroid distance = -0.6437
+- commercial rent vs commercial centroid distance = -0.0190
+```
+
+Comparison against recent demand variants:
+
+```text
+Commute-aware deterministic goods choice:
+- final unsold_output = 661
+- final mean_commercial_rent = 85.7895
+
+Commute-aware probabilistic goods choice:
+- final unsold_output = 805
+- final mean_commercial_rent = 107.9943
+
+Shopping habits with review-triggered re-search:
+- final unsold_output = 472
+- final mean_commercial_rent = 104.1892
+```
+
+Assessment:
+
+- shopping habits materially improved goods-market absorption relative to the recent non-habit demand variants
+- the strong residential rent gradient was preserved
+- commercial rents still do not show a meaningful spatial gradient
+- current evidence suggests that demand persistence helps market clearing, but commercial location value is still not concentrated enough to generate a center
+
+### 2026-04-23: Added experience-based human capital and workplace-distance social ties
+
+Implemented the minimal human-capital/network version to break worker uniformity and make productive relationships persistent but spatially grounded.
+
+Design:
+
+- workers accumulate human capital when employed
+- workers form coworker ties inside firms
+- ties persist after workers move but decay as a function of current workplace distance
+- same-firm ties decay very slowly
+- weak ties are dropped to keep the network sparse
+- production now uses effective labor instead of raw worker count
+
+Effective labor:
+
+```text
+effective_labor(worker) = human_capital(worker) * network_multiplier(worker)
+```
+
+Network multiplier:
+
+- based on the sum of active tie strengths
+- strongest for same-firm ties
+- also counts nearby-firm ties within a spillover radius
+- capped to avoid runaway superstar effects
+
+Implementation:
+
+- added `experience_ticks`, `human_capital`, and sparse `social_ties` to `Worker`
+- added `src/HumanCapital.jl`
+- scheduler now updates human capital and social ties each tick before production
+- `production_capacity` now uses summed effective labor
+
+Expectation:
+
+- longer-worked workers become more productive
+- worker mobility carries productive relationships across firms
+- nearby employment clusters should preserve network value better than distant ones
+- the model gains a new endogenous mechanism for persistent local agglomeration
+
 ### 2026-04-22: Hypothesis added for commercial rent blow-up
 
 Added working hypothesis that commercial-space search is too conservative. Next test should loosen commercial search radius/global sampling and compare against the 250-tick stress-test baseline.
@@ -909,3 +1332,101 @@ Needed analysis:
 Status:
 
 Open diagnostic question. Do not assume aggregate search coverage rules out search failure; analyze time-local substitute availability.
+
+### 2026-04-23: Time-local substitute audit for commercial rent and goods-price spikes
+
+Added targeted event-level diagnostics and export script:
+
+- `src/OpenDiagnostics.jl`
+- `scripts/export_open_diagnostic_data.jl`
+
+These diagnostics record, for each commercial-space search and goods search:
+
+- sampled search-set size
+- chosen lot/firm
+- best sampled option
+- best globally available option at that same tick
+- count of better unsearched alternatives
+
+Matched run used for the audit:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Run outputs:
+
+```text
+outputs/diagnostics/open_diagnostic_250/commercial_search.csv
+outputs/diagnostics/open_diagnostic_250/goods_search.csv
+outputs/diagnostics/open_diagnostic_250/market_log.csv
+outputs/diagnostics/open_diagnostic_250/lots_final.csv
+```
+
+Final state in this matched run:
+
+```text
+- population = 4953
+- employment = 4622
+- firm_count = 406
+- mean_commercial_rent = 132.4042
+- unsold_output = 1024
+- sold_out_firms = 304
+- vacant_commercial_units = 93
+```
+
+Commercial-space findings:
+
+```text
+All chosen commercial-search events:
+- chosen events = 4921
+- share with at least one cheaper unsearched vacant lot = 0.0998
+- mean chosen-rent gap to cheapest global vacant lot = 1.9768
+
+Late-stage spike window (ticks >= 200):
+- share with at least one cheaper unsearched vacant lot = 0.2602
+
+Top 5% highest-rent chosen commercial events:
+- share with at least one cheaper unsearched vacant lot = 0.9879
+- mean chosen-rent gap to cheapest global vacant lot = 38.7238
+```
+
+Representative high-rent choices:
+
+```text
+tick : firm : chosen_lot : chosen_rent : best_global_vacant_rent : cheaper_unsearched_vacant_lots
+246 : 2904 :  668 : 4419.70 : 1.00 :  97
+246 : 2567 :  506 : 2041.27 : 1.00 : 100
+243 : 2868 : 1036 :  590.88 : 1.00 : 109
+225 : 2577 :  331 :  422.74 : 1.00 : 159
+```
+
+Assessment:
+
+The open commercial-space question is answered yes. Aggregate search coverage was misleading for the spike question. Extreme commercial rent events are strongly associated with firms failing to sample abundant cheaper vacant substitutes available elsewhere in the same tick.
+
+Goods-search findings:
+
+```text
+- goods search events retained = 250000
+- purchase events = 168274
+- share of purchase events with a better unsearched affordable option = 0.9920
+- mean chosen-score gap to best global affordable option = 0.0219
+- no-choice events despite globally affordable goods existing = 16258
+```
+
+Assessment:
+
+The open goods-market substitute question is also answered yes, but with a different magnitude profile. Limited sampling almost always leaves a better global option unsearched, yet the mean score gap is modest. This suggests a broad, persistent search-friction problem in goods markets rather than a rare extreme tail comparable to the commercial-rent spikes.
+
+Implication for next changes:
+
+- commercial-space search likely needs a stronger fallback to global vacant-space search when sampled rents are high
+- goods search likely needs wider or adaptive sampling, but the urgency appears lower than the commercial-space spike problem

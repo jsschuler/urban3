@@ -3,6 +3,11 @@ Base.@kwdef struct SearchParams
     radius::Int = 4
     global_samples::Int = 8
     local_weight::Float64 = 0.75
+    max_expansions::Int = 0
+    poisson_multiplier::Float64 = 1.5
+    radius_step::Int = 2
+    global_multiplier::Float64 = 2.0
+    local_weight_decay::Float64 = 0.15
 end
 
 Base.@kwdef struct FirmTypeParams
@@ -28,10 +33,49 @@ Base.@kwdef mutable struct ModelParams
     firm_type_count::Int = 3
     seed::Int = 42
 
-    goods_search::SearchParams = SearchParams()
+    goods_search::SearchParams = SearchParams(max_expansions=1, radius_step=3, global_multiplier=1.75)
     job_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=5, global_samples=10)
     housing_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=5, global_samples=10)
-    commercial_search::SearchParams = SearchParams(poisson_intensity=8.0, radius=12, global_samples=48, local_weight=0.45)
+    commercial_search::SearchParams = SearchParams(
+        poisson_intensity=8.0,
+        radius=12,
+        global_samples=48,
+        local_weight=0.45,
+        max_expansions=2,
+        poisson_multiplier=1.75,
+        radius_step=8,
+        global_multiplier=2.0,
+        local_weight_decay=0.20,
+    )
+    goods_search_target_affordable_candidates::Int = 3
+    commercial_search_target_vacant_candidates::Int = 3
+    commercial_search_acceptance_multiplier::Float64 = 1.25
+    commercial_search_global_rescue::Bool = true
+    goods_travel_cost_per_block::Float64 = 0.35
+    goods_choice_sensitivity::Float64 = 4.0
+    goods_price_weight::Float64 = 1.0
+    goods_distance_weight::Float64 = 1.0
+    shopping_review_prob::Float64 = 0.05
+    shopping_price_increase_tolerance::Float64 = 0.10
+    consumer_access_radius::Int = 8
+    job_access_radius::Int = 8
+    access_distance_decay::Float64 = 1.0
+    housing_job_access_weight::Float64 = 0.20
+    firm_consumer_access_weight::Float64 = 0.08
+    firm_job_access_weight::Float64 = 0.03
+    firm_employee_commute_weight::Float64 = 0.25
+    human_capital_start::Float64 = 1.0
+    human_capital_gain_per_tick::Float64 = 0.002
+    human_capital_max::Float64 = 2.0
+    network_multiplier_weight::Float64 = 0.15
+    network_multiplier_cap::Float64 = 0.50
+    tie_formation_rate::Float64 = 0.05
+    tie_same_firm_decay::Float64 = 0.002
+    tie_base_decay::Float64 = 0.01
+    tie_distance_decay_weight::Float64 = 0.02
+    tie_decay_max::Float64 = 0.15
+    tie_min_strength::Float64 = 0.01
+    network_spillover_radius::Int = 8
 
     firm_types::Vector{FirmTypeParams} = [FirmTypeParams(), FirmTypeParams(productivity=3.4), FirmTypeParams(productivity=4.8)]
     price_raise_rate::Float64 = 0.04
@@ -84,4 +128,7 @@ Base.@kwdef mutable struct ModelParams
     market_log_limit::Int = 100_000
     enable_search_logging::Bool = true
     search_log_limit::Int = 100_000
+    enable_open_diagnostic_logging::Bool = false
+    open_diagnostic_commercial_limit::Int = 100_000
+    open_diagnostic_goods_limit::Int = 250_000
 end

@@ -27,6 +27,11 @@ mutable struct Worker
     savings_rate::Float64
     utility::Vector{Float64}
     ownership_shares::Dict{Int,Float64}
+    preferred_firm_by_type::Dict{Int,Int}
+    last_delivered_cost_by_type::Dict{Int,Float64}
+    experience_ticks::Int
+    human_capital::Float64
+    social_ties::Dict{Int,Float64}
     moved_job_this_tick::Bool
     moved_home_this_tick::Bool
 end
@@ -132,6 +137,47 @@ mutable struct SearchCoverageLog
     unique_draw_counts_by_domain::Dict{Symbol,Int}
 end
 
+mutable struct CommercialSearchDiagnosticRecord
+    tick::Int
+    firm_id::Int
+    origin_lot_id::Union{Nothing,Int}
+    sampled_count::Int
+    sampled_vacant_count::Int
+    chosen_lot_id::Union{Nothing,Int}
+    chosen_rent::Float64
+    best_sampled_vacant_lot_id::Union{Nothing,Int}
+    best_sampled_vacant_rent::Float64
+    best_global_vacant_lot_id::Union{Nothing,Int}
+    best_global_vacant_rent::Float64
+    cheaper_unsampled_vacant_count::Int
+end
+
+mutable struct GoodsSearchDiagnosticRecord
+    tick::Int
+    worker_id::Int
+    origin_lot_id::Union{Nothing,Int}
+    budget::Float64
+    sampled_count::Int
+    chosen_firm_id::Union{Nothing,Int}
+    chosen_firm_type::Union{Nothing,Int}
+    chosen_price::Float64
+    chosen_score::Float64
+    best_sampled_firm_id::Union{Nothing,Int}
+    best_sampled_score::Float64
+    best_global_firm_id::Union{Nothing,Int}
+    best_global_score::Float64
+    best_global_price::Float64
+    better_unsampled_count::Int
+    affordable_global_count::Int
+end
+
+mutable struct OpenDiagnosticLog
+    commercial_search_records::Vector{CommercialSearchDiagnosticRecord}
+    goods_search_records::Vector{GoodsSearchDiagnosticRecord}
+    max_commercial_records::Int
+    max_goods_records::Int
+end
+
 mutable struct ModelState
     tick::Int
     params::ModelParams
@@ -143,6 +189,9 @@ mutable struct ModelState
     decision_log::DecisionLog
     market_log::MarketLog
     search_log::SearchCoverageLog
+    open_diagnostic_log::OpenDiagnosticLog
+    consumer_access_by_lot::Vector{Float64}
+    job_access_by_lot::Vector{Float64}
 end
 
 employment_state(w::Worker) = isnothing(w.employer_id) ? Unemployed() : Employed()
@@ -172,5 +221,14 @@ function init_search_coverage_log(limit::Int)
         Dict{Symbol,Int}(),
         Dict{Symbol,Int}(),
         Dict{Symbol,Int}(),
+    )
+end
+
+function init_open_diagnostic_log(commercial_limit::Int, goods_limit::Int)
+    OpenDiagnosticLog(
+        CommercialSearchDiagnosticRecord[],
+        GoodsSearchDiagnosticRecord[],
+        commercial_limit,
+        goods_limit,
     )
 end
