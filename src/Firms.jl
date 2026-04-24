@@ -251,9 +251,67 @@ function commercial_space_search!(state::ModelState, f::Firm)
     return false
 end
 
+function firm_anchor_consumer_access(state::ModelState, f::Firm)
+    isempty(f.commercial_units_by_lot) && return mean(state.consumer_access_by_lot)
+    total_units = 0
+    weighted_access = 0.0
+    for (lot_id, units) in f.commercial_units_by_lot
+        weighted_access += state.consumer_access_by_lot[lot_id] * units
+        total_units += units
+    end
+    total_units == 0 && return mean(state.consumer_access_by_lot)
+    return weighted_access / total_units
+end
+
+function recent_mean_sales(f::Firm, lookback::Int)
+    isempty(f.realized_sales_history) && return 0.0
+    window = last(f.realized_sales_history, min(length(f.realized_sales_history), lookback))
+    return mean(window)
+end
+
+function same_type_competition_index(state::ModelState, f::Firm, lot_id::Int)
+    radius = state.params.consumer_access_radius
+    decay = state.params.access_distance_decay
+    destination = state.lots[lot_id]
+    total = 0.0
+    for other in active_firms(state)
+        other.id == f.id && continue
+        other.firm_type != f.firm_type && continue
+        for (other_lot_id, units) in other.commercial_units_by_lot
+            d = taxicab(destination, state.lots[other_lot_id])
+            total += units * access_weight(d, radius, decay)
+        end
+    end
+    return total
+end
+
+function expected_site_sales_units(state::ModelState, f::Firm, lot_id::Int)
+    candidate_access = state.consumer_access_by_lot[lot_id]
+    anchor_access = firm_anchor_consumer_access(state, f)
+    competition = 1.0 + state.params.commercial_bid_same_type_competition_weight *
+        same_type_competition_index(state, f, lot_id)
+
+    if isempty(f.realized_sales_history)
+        mean_access = mean(state.consumer_access_by_lot)
+        base_sales = state.params.commercial_bid_startup_expected_sales
+        access_scale = (candidate_access + 1.0) / (mean_access + 1.0)
+        return max(1.0, base_sales * access_scale / competition)
+    end
+
+    base_sales = max(1.0, recent_mean_sales(f, state.params.commercial_bid_recent_sales_lookback))
+    access_scale = (candidate_access + 1.0) / (anchor_access + 1.0)
+    return max(1.0, base_sales * access_scale / competition)
+end
+
+function expected_site_revenue(state::ModelState, f::Firm, lot_id::Int)
+    return expected_site_sales_units(state, f, lot_id) * f.goods_price
+end
+
 function commercial_bid_amount(state::ModelState, f::Firm, lot_id::Int)
+    revenue_component = state.params.commercial_bid_share * expected_site_revenue(state, f, lot_id)
     gross_value = commercial_location_gross_value(state, f, lot_id)
-    raw_bid = state.params.commercial_bid_base + state.params.commercial_bid_slope * max(0.0, gross_value)
+    location_premium = max(0.0, gross_value) * state.params.commercial_bid_location_value_weight
+    raw_bid = revenue_component + location_premium
     return clamp(raw_bid, state.params.min_commercial_rent, state.params.commercial_bid_cap)
 end
 

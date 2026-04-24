@@ -74,11 +74,184 @@ Human capital + workplace-distance ties:
 - unsold_output = 777
 ```
 
-Status:
+**Partial resolution 2026-04-23:**
 
-Open. The core unresolved problem is that commercial success is still not spatially concentrated enough to generate a durable commercial rent gradient without damaging other parts of market performance.
+Adding an additive location-value premium to commercial bids (see change log below)
+restored a strong commercial gradient at 250 ticks (-0.42). Long-run durability
+(5000 ticks) is pending the matched comparison described in Next Steps above.
+
+Status: partially resolved at short horizons; long-run durability unconfirmed.
+
+## Next Steps
+
+### 2026-04-23: Pending — matched 5000-tick long-run comparison for location-value premium
+
+Context:
+
+The location-value premium change (see below) produced a strong commercial
+rent gradient at 250 ticks (-0.42). The next question is whether this holds
+at longer run lengths.
+
+Two Julia processes are in flight:
+
+1. **Process 33044** — 5000-tick run, `outside_entry_rate=2.0`, `seed=77`, OLD
+   code (no location premium). Config matches the post-scheduler long-run
+   benchmark. This is the comparison baseline.
+
+2. The 1000-tick `outside_entry_rate=12` run was killed — that config grows the
+   city too fast (~8000 workers by tick 500) making each tick prohibitively slow.
+
+When process 33044 finishes:
+
+1. Run `Rscript diagnostics/rent_gradient_diagnostics.R outputs/diagnostics/lots_long_5000_bidding.csv outputs/diagnostics/rent_gradient_long_5000_bidding` to get the old-code 5000-tick gradient as baseline.
+
+2. Start a matched new-code 5000-tick run with the same params to test whether
+   the location-value premium gradient holds at long horizons:
+
+```julia
+julia --project -e '
+using UrbanABM
+params = ModelParams(width=40, height=40, initial_workers=3000, initial_firms=150,
+    outside_entry_rate=2.0, seed=77,
+    enable_decision_logging=false, enable_search_logging=false,
+    enable_market_logging=true, market_log_limit=6000)
+state = init_state(params)
+t0 = time()
+for t in 1:5000
+    step!(state)
+    if t in Set([100,500,1000,2000,3000,4000,5000])
+        m = metrics_snapshot(state)
+        println("tick=",t," elapsed=",round(time()-t0,digits=2),
+            " population=",m["population"]," employment=",m["employment"],
+            " unhoused=",m["unhoused"]," firms=",m["firm_count"],
+            " mean_res_rent=",round(m["mean_residential_rent"],digits=3),
+            " mean_com_rent=",round(m["mean_commercial_rent"],digits=3))
+        flush(stdout)
+    end
+end
+write_lot_csv(state, "outputs/diagnostics/lots_long_5000_locprem.csv")
+write_market_log_csv(state, "outputs/diagnostics/market_log_long_5000_locprem.csv")
+'
+```
+
+3. Run the R gradient script on the new-code output and compare:
+   - old code 5000-tick gradient (expected near -0.04 from prior log)
+   - new code 5000-tick gradient (target: meaningfully negative, ideally near -0.20 or better)
+
+Success criterion: commercial gradient at 5000 ticks is significantly more
+negative than the old-code baseline and does not revert to near-zero.
+
+---
 
 ## Changes
+
+### 2026-04-23: Added location-value premium to commercial bids
+
+Follow-up to the expected-revenue bid pass and subsequent demand-side extensions
+(accessibility, commute utility, probabilistic goods, shopping habits, human
+capital) that collectively left the commercial rent gradient near zero.
+
+Root cause:
+
+- `expected_site_sales_units` for incumbents uses `candidate_access / anchor_access`
+  as the access scaling ratio
+- an incumbent already at a central location gets an access scale near 1.0 when
+  bidding for other central lots, so bids do not systematically favour central lots
+  over peripheral ones
+- this collapses spatial differentiation in the bid schedule
+
+Design change:
+
+- keep the revenue-based component: `commercial_bid_share * expected_site_revenue`
+- add an additive location premium: `commercial_bid_location_value_weight * commercial_location_gross_value`
+- `commercial_location_gross_value` uses consumer access, job access, and employee
+  commute terms already calibrated — the premium is therefore always highest at
+  the most accessible lots, regardless of where the incumbent currently sits
+- bids are still clamped to `commercial_bid_cap`
+
+New parameter in `src/Parameters.jl`:
+
+- `commercial_bid_location_value_weight = 1.0`
+
+Implementation in `src/Firms.jl`:
+
+- `commercial_bid_amount` now sums the revenue component and the location premium
+
+Matched 250-tick benchmark:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 4958
+- employment = 4590
+- firm_count = 369
+- mean_commercial_rent = 2.5233
+- unsold_output = 764
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.6611
+- commercial rent vs geometric center distance = -0.4239
+- residential rent vs residential centroid distance = -0.6638
+- commercial rent vs residential centroid distance = -0.4307
+- residential rent vs commercial centroid distance = -0.6829
+- commercial rent vs commercial centroid distance = -0.4446
+```
+
+Comparison against prior runs:
+
+```text
+Expected-revenue bids only (no location premium):
+- mean_commercial_rent = 1.6290
+- commercial rent vs geometric center distance = -0.1505
+- commercial_with_cheaper_unsampled_share = 0.1251
+
+Human capital run (most recent before this change):
+- mean_commercial_rent = 81.4072
+- commercial rent vs geometric center distance = -0.0272
+
+Location-value premium added (this change):
+- mean_commercial_rent = 2.5233
+- commercial rent vs geometric center distance = -0.4239
+- commercial_with_cheaper_unsampled_share = 0.5972
+```
+
+Assessment:
+
+- the location premium substantially restored the commercial rent gradient
+- commercial gradient is now -0.42, comparable to the first heuristic-only bid
+  pass (-0.4616) but now combined with the revenue basis
+- commercial rents remain low in absolute terms (mean = 2.52) — the bid cap and
+  smoothing rate keep rents from spiking, which is desirable
+- the residentially-driven gradient is also strong and preserved (-0.66)
+- `commercial_with_cheaper_unsampled_share` rose to 0.60, meaning many firms are
+  still landing on non-optimal lots; this is an open search-coverage tradeoff
+- the primary remaining question is whether the gradient is durable at longer
+  runs or whether it washes out as the city grows
+
+Status: promising. Next step is to rerun the open issue check for commercial rent
+blow-up at longer horizons and verify the gradient holds under the new bid
+structure.
+
+Output files:
+
+```text
+outputs/diagnostics/open_diagnostic_locprem_250/
+outputs/diagnostics/rent_gradient_locprem_250/
+```
 
 ### 2026-04-23: Added minimal periodic commercial bidding for vacant units
 
@@ -163,6 +336,125 @@ Assessment:
   commercial rents seen in short smoke runs
 - if so, the next levers are likely bid scaling, bid caps, or a more direct
   expected-revenue basis for bids
+
+### 2026-04-23: Replaced heuristic-score commercial bids with expected-revenue bids
+
+Follow-up to the first bidding pass after the matched 250-tick benchmark showed
+that bidding created a clear commercial rent gradient but left the entire
+commercial rent field compressed near the minimum.
+
+Triggering evidence from the first bid pass:
+
+```text
+Matched 250-tick benchmark:
+- final mean_commercial_rent = 1.4214
+- commercial rent vs geometric center distance = -0.4616
+- commercial rent by distance bin was downward sloping, but mostly in the range 1.0 to 1.9
+```
+
+Interpretation:
+
+- the auction structure was working in a directional spatial sense
+- the bid schedule itself was too weak because bids were still derived from a
+  heuristic location score rather than expected monetary payoff
+- firms were competing for central space, but not bidding enough to capitalize
+  that advantage into meaningful rents
+
+Design change:
+
+- keep the same periodic vacant-unit bidding structure
+- replace heuristic-score bids with bids based on expected site revenue
+- for incumbent firms, expected site sales scale from recent realized sales and
+  the ratio of candidate consumer access to current-site consumer access
+- for startup firms, expected site sales scale from a startup baseline and the
+  ratio of candidate consumer access to mean citywide consumer access
+- discount expected sales by nearby same-type competition so firms do not all
+  bid as if they capture the full local market
+- set bid ceiling as a fixed share of expected site revenue, still capped and
+  smoothed into rents on award
+
+Implementation:
+
+- added expected-sales and expected-revenue helpers in `src/Firms.jl`
+- `commercial_bid_amount` now uses expected site revenue instead of heuristic
+  score units
+- replaced `commercial_bid_base` and `commercial_bid_slope` with:
+  - `commercial_bid_share`
+  - `commercial_bid_recent_sales_lookback`
+  - `commercial_bid_startup_expected_sales`
+  - `commercial_bid_same_type_competition_weight`
+- raised `commercial_bid_cap` to allow meaningful commercial premia if the new
+  revenue-based bids support them
+
+Status:
+
+Implemented. Next rerun the matched 250-tick benchmark and compare commercial
+rent level, rent gradient, and market-clearing outcomes against both the
+pre-bidding and first-bidding runs.
+
+Matched rerun after switching to expected-revenue bids:
+
+```text
+Configuration:
+- width = 40
+- height = 40
+- initial_workers = 2000
+- initial_firms = 120
+- outside_entry_rate = 12.0
+- ticks = 250
+- seed = 12
+```
+
+Final state:
+
+```text
+- population = 4982
+- employment = 4555
+- firm_count = 348
+- mean_commercial_rent = 1.6290
+- unsold_output = 630
+```
+
+Rent-gradient read from final lots:
+
+```text
+- residential rent vs geometric center distance = -0.7350
+- commercial rent vs geometric center distance = -0.1505
+- residential rent vs residential centroid distance = -0.7354
+- commercial rent vs commercial centroid distance = -0.1426
+```
+
+Commercial-search comparison against the first bid pass:
+
+```text
+First bid pass:
+- mean_commercial_rent = 1.4214
+- commercial rent vs geometric center distance = -0.4616
+- commercial_with_cheaper_unsampled_share = 0.5645
+- commercial_mean_rent_gap_to_best_global = 0.5392
+- unsold_output = 1053
+
+Expected-revenue bid pass:
+- mean_commercial_rent = 1.6290
+- commercial rent vs geometric center distance = -0.1505
+- commercial_with_cheaper_unsampled_share = 0.1251
+- commercial_mean_rent_gap_to_best_global = 0.0309
+- unsold_output = 630
+```
+
+Assessment:
+
+- switching to expected-revenue bids improved commercial-rent level modestly
+  and materially reduced local search/path mismatch
+- goods-market absorption also improved relative to the first bid pass
+- however, the commercial spatial gradient became much weaker than in the first
+  bid pass
+- current evidence suggests the revenue-based bid is still underpowered on rent
+  level while also flattening the strong central premium created by the earlier
+  bid heuristic
+- the likely next move is to keep the expected-revenue basis but restore a
+  stronger location-value multiplier, rather than choosing between pure access
+  heuristics and pure recent-sales scaling
 
 ### 2026-04-23: Switched to bounded staged search with commercial rescue
 
