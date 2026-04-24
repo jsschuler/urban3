@@ -3,7 +3,7 @@ function worker_income(w::Worker)
 end
 
 function consumption_phase!(state::ModelState)
-    remaining = Dict(f.id => f.committed_output for f in active_firms(state))
+    remaining = Dict(f.id => f.committed_output for f in active_firms(state) if is_b2c(state, f))
     for w in state.workers
         income = worker_income(w)
         income <= 0 && continue

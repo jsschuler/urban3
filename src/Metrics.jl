@@ -10,7 +10,7 @@ function metrics_snapshot(state::ModelState)
     wages = [w.current_wage for w in state.workers if !isnothing(w.employer_id)]
     rents_r = [l.residential_rent for l in state.lots]
     rents_c = [l.commercial_rent for l in state.lots]
-    prices = [f.goods_price for f in active]
+    prices = [f.goods_price for f in active if is_b2c(state, f)]
     commutes = commute_distances(state)
     Dict(
         "type" => "diagnostic_snapshot",
@@ -35,6 +35,7 @@ function metrics_snapshot(state::ModelState)
         "mean_commute" => isempty(commutes) ? 0.0 : mean(commutes),
         "firm_size_distribution" => [length(f.worker_ids) for f in active],
         "goods_sales_by_type" => sales_by_type(state),
+        "input_market_summary" => input_market_summary(state),
         "decision_summary" => decision_summary(state),
         "market_failure_summary" => market_failure_summary(state),
         "search_coverage_summary" => search_coverage_summary(state),
@@ -60,4 +61,24 @@ function sales_by_type(state::ModelState)
         out[string(f.firm_type)] += f.realized_sales_this_tick
     end
     return out
+end
+
+function input_market_summary(state::ModelState)
+    b2b = [f for f in active_firms(state) if is_b2b(state, f)]
+    b2c = [f for f in active_firms(state) if is_b2c(state, f)]
+    fill_rates = Float64[]
+    for f in b2c
+        scale = leontief_input_scale(state, f)
+        push!(fill_rates, scale)
+    end
+    input_prices = Dict(string(f.firm_type) => f.goods_price for f in b2b)
+    Dict(
+        "b2b_firm_count" => length(b2b),
+        "b2c_firm_count" => length(b2c),
+        "mean_input_fill_rate" => isempty(fill_rates) ? 1.0 : mean(fill_rates),
+        "zero_fill_rate_share" => isempty(fill_rates) ? 0.0 : count(x -> x == 0.0, fill_rates) / length(fill_rates),
+        "mean_input_price_by_type" => input_prices,
+        "b2b_sold_out_share" => isempty(b2b) ? 0.0 :
+            count(f -> f.realized_sales_this_tick >= f.committed_output && f.committed_output > 0, b2b) / length(b2b),
+    )
 end

@@ -1,3 +1,105 @@
+is_b2b(state::ModelState, f::Firm) = state.params.firm_types[f.firm_type].firm_role == :b2b
+is_b2c(state::ModelState, f::Firm) = state.params.firm_types[f.firm_type].firm_role == :b2c
+
+function required_input_types(state::ModelState, f::Firm)
+    row = @view state.io_matrix[f.firm_type, :]
+    [(i, row[i]) for i in eachindex(row) if row[i] > 0.0]
+end
+
+function buyer_anchor_lot_id(state::ModelState, f::Firm)
+    isempty(f.commercial_units_by_lot) && return nothing
+    return first(keys(f.commercial_units_by_lot))
+end
+
+function min_supplier_distance(state::ModelState, buyer::Firm, supplier::Firm)
+    buyer_lot_id = buyer_anchor_lot_id(state, buyer)
+    isnothing(buyer_lot_id) && return 0
+    buyer_lot = state.lots[buyer_lot_id]
+    min_d = typemax(Int)
+    for lid in keys(supplier.commercial_units_by_lot)
+        min_d = min(min_d, taxicab(buyer_lot, state.lots[lid]))
+    end
+    return min_d == typemax(Int) ? 0 : min_d
+end
+
+function effective_input_cost(state::ModelState, buyer::Firm, supplier::Firm)
+    dist = min_supplier_distance(state, buyer, supplier)
+    return supplier.goods_price + state.params.input_travel_cost_per_block * dist
+end
+
+function sample_input_suppliers(state::ModelState, buyer::Firm, b2b_type::Int)
+    p = state.params.input_search
+    buyer_lot_id = buyer_anchor_lot_id(state, buyer)
+    out = Firm[]
+    for f in active_firms(state)
+        f.firm_type == b2b_type || continue
+        is_b2b(state, f) || continue
+        f.committed_output > f.realized_sales_this_tick || continue
+        push!(out, f)
+    end
+    isempty(out) && return out
+    local_set = Firm[]
+    if !isnothing(buyer_lot_id)
+        buyer_lot = state.lots[buyer_lot_id]
+        for f in out
+            if any(taxicab(buyer_lot, state.lots[lid]) <= p.radius for lid in keys(f.commercial_units_by_lot))
+                push!(local_set, f)
+            end
+        end
+    end
+    n_global = min(length(out), p.global_samples)
+    global_set = out[randperm(state.rng, length(out))[1:n_global]]
+    return unique(vcat(local_set, global_set))
+end
+
+function leontief_input_scale(state::ModelState, f::Firm)
+    inputs = required_input_types(state, f)
+    isempty(inputs) && return 1.0
+    cap = production_capacity(state, f, state.params)
+    cap == 0 && return 0.0
+    min_fill = 1.0
+    for (b2b_type, coeff) in inputs
+        needed = coeff * cap
+        needed <= 0 && continue
+        acquired = get(f.inputs_acquired, b2b_type, 0)
+        min_fill = min(min_fill, acquired / needed)
+    end
+    return min_fill
+end
+
+function commit_intermediate_output!(state::ModelState)
+    for f in active_firms(state)
+        is_b2c(state, f) && continue
+        f.committed_output = production_capacity(state, f, state.params)
+        f.realized_sales_this_tick = 0
+    end
+end
+
+function input_purchasing_phase!(state::ModelState)
+    for f in active_firms(state)
+        is_b2b(state, f) && continue
+        empty!(f.inputs_acquired)
+        f.input_cost_this_tick = 0.0
+        cap = production_capacity(state, f, state.params)
+        cap == 0 && continue
+        for (b2b_type, coeff) in required_input_types(state, f)
+            units_needed = ceil(Int, coeff * cap)
+            units_needed == 0 && continue
+            candidates = sample_input_suppliers(state, f, b2b_type)
+            isempty(candidates) && continue
+            supplier = candidates[argmin([effective_input_cost(state, f, sup) for sup in candidates])]
+            available = supplier.committed_output - supplier.realized_sales_this_tick
+            units_bought = min(units_needed, available)
+            units_bought == 0 && continue
+            supplier.realized_sales_this_tick += units_bought
+            f.inputs_acquired[b2b_type] = get(f.inputs_acquired, b2b_type, 0) + units_bought
+            dist = min_supplier_distance(state, f, supplier)
+            f.input_cost_this_tick += units_bought * supplier.goods_price +
+                state.params.input_travel_cost_per_block * dist * units_bought
+        end
+    end
+end
+
 function production_capacity(state::ModelState, f::Firm, params::ModelParams)
     !f.active && return 0
     ft = params.firm_types[f.firm_type]
@@ -50,7 +152,9 @@ function firm_reviews!(state::ModelState)
     for f in active_firms(state)
         if rand(state.rng) < state.params.price_review_prob
             sold_out = !isempty(f.realized_sales_history) && f.realized_sales_history[end] >= f.committed_output
-            f.goods_price *= sold_out ? (1 + state.params.price_raise_rate) : (1 - state.params.price_cut_rate)
+            raise = is_b2b(state, f) ? state.params.input_price_raise_rate : state.params.price_raise_rate
+            cut   = is_b2b(state, f) ? state.params.input_price_cut_rate   : state.params.price_cut_rate
+            f.goods_price *= sold_out ? (1 + raise) : (1 - cut)
             f.goods_price = max(0.25, f.goods_price)
         end
         if rand(state.rng) < state.params.wage_review_prob
@@ -63,7 +167,10 @@ end
 
 function commit_production!(state::ModelState)
     for f in active_firms(state)
-        f.committed_output = production_capacity(state, f, state.params)
+        is_b2b(state, f) && continue  # already committed in commit_intermediate_output!
+        cap = production_capacity(state, f, state.params)
+        scale = leontief_input_scale(state, f)
+        f.committed_output = floor(Int, scale * cap)
         f.realized_sales_this_tick = 0
     end
 end
@@ -73,7 +180,8 @@ function calculate_profits!(state::ModelState)
         revenue = f.realized_sales_this_tick * f.goods_price
         wages = sum(values(f.current_worker_wages); init=0.0)
         rent = sum(state.lots[lid].commercial_rent * n for (lid, n) in f.commercial_units_by_lot; init=0.0)
-        profit = revenue - wages - rent
+        input_costs = is_b2c(state, f) ? f.input_cost_this_tick : 0.0
+        profit = revenue - wages - rent - input_costs
         push!(f.realized_sales_history, f.realized_sales_this_tick)
         push!(f.profit_history, profit)
         if profit > 0

@@ -1,0 +1,34 @@
+seed=456 tick=1000 elapsed=247.7 pop=4980 firms=314 fill=0.778 com_rent=4.451 res_rent=5.053
+
+[94626] signal 15: Terminated: 15
+in expression starting at none:9
+iterate at ./dict.jl:713 [inlined]
+iterate at ./iterators.jl:551
+iterate at ./generator.jl:45 [inlined]
+grow_to! at ./array.jl:864 [inlined]
+collect at ./array.jl:788
+affordable_sampled_goods_count at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:172
+#45 at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:42 [inlined]
+#adaptive_candidate_lots#6 at /Users/l25-n05917-res/ResearchCode/urban3/src/Search.jl:126
+adaptive_candidate_lots at /Users/l25-n05917-res/ResearchCode/urban3/src/Search.jl:105 [inlined]
+choose_good at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:35
+consumption_phase! at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:13
+step! at /Users/l25-n05917-res/ResearchCode/urban3/src/Scheduler.jl:20
+top-level scope at ./none:10
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:934
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:886
+ijl_toplevel_eval at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:952 [inlined]
+ijl_toplevel_eval_in at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:994
+jlplt_ijl_toplevel_eval_in_28467.1 at /Applications/Julia-1.11.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+eval at ./boot.jl:430 [inlined]
+exec_options at ./client.jl:296
+_start at ./client.jl:531
+jfptr__start_73900.1 at /Applications/Julia-1.11.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/./julia.h:2157 [inlined]
+true_main at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/jlapi.c:900
+jl_repl_entrypoint at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/jlapi.c:1059
+unknown function (ip: 0x0)
+Allocations: 6219569434 (Pool: 6219568595; Big: 839); GC: 5973
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for UrbanABM [df92e904-58d9-4e52-9967-f7e97dfb7028]
+│   exception = Required dependency Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics") failed to load from a cache file.
+└ @ Base loading.jl:2596

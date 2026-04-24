@@ -22,6 +22,21 @@ function draw_worker(id::Int, params::ModelParams, rng::AbstractRNG)
     )
 end
 
+function generate_io_matrix(params::ModelParams)
+    n = params.firm_type_count
+    rng_io = MersenneTwister(params.io_matrix_seed)
+    mat = zeros(Float64, n, n)
+    b2b_types = [i for i in 1:n if params.firm_types[i].firm_role == :b2b]
+    b2c_types = [i for i in 1:n if params.firm_types[i].firm_role == :b2c]
+    for buyer in b2c_types, supplier in b2b_types
+        if rand(rng_io) < params.io_matrix_density
+            mat[buyer, supplier] = params.io_matrix_coefficient_min +
+                rand(rng_io) * (params.io_matrix_coefficient_max - params.io_matrix_coefficient_min)
+        end
+    end
+    return mat
+end
+
 function init_state(params::ModelParams=ModelParams())
     rng = MersenneTwister(params.seed)
     lots = Lot[]
@@ -48,7 +63,8 @@ function init_state(params::ModelParams=ModelParams())
         ),
         zeros(Float64, length(lots)),
         zeros(Float64, length(lots)),
-        CommercialBidProposal[])
+        CommercialBidProposal[],
+        generate_io_matrix(params))
     for _ in 1:params.initial_firms
         found_firm!(state, [rand(rng, eachindex(state.workers))]; startup_capital=0.0)
     end

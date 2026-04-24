@@ -17,6 +17,7 @@ Base.@kwdef struct FirmTypeParams
     space_elasticity::Float64 = 0.25
     process_price::Float64 = 60.0
     capital_price::Float64 = 25.0
+    firm_role::Symbol = :b2c   # :b2b sells to firms only; :b2c sells to consumers only
 end
 
 Base.@kwdef mutable struct ModelParams
@@ -30,7 +31,7 @@ Base.@kwdef mutable struct ModelParams
     initial_residential_rent_max::Float64 = 3.0
     initial_commercial_rent_min::Float64 = 4.5
     initial_commercial_rent_max::Float64 = 7.5
-    firm_type_count::Int = 3
+    firm_type_count::Int = 4
     seed::Int = 42
 
     goods_search::SearchParams = SearchParams(max_expansions=1, radius_step=3, global_multiplier=1.75)
@@ -83,7 +84,12 @@ Base.@kwdef mutable struct ModelParams
     tie_min_strength::Float64 = 0.01
     network_spillover_radius::Int = 8
 
-    firm_types::Vector{FirmTypeParams} = [FirmTypeParams(), FirmTypeParams(productivity=3.4), FirmTypeParams(productivity=4.8)]
+    firm_types::Vector{FirmTypeParams} = [
+        FirmTypeParams(firm_role=:b2b, productivity=4.0),
+        FirmTypeParams(firm_role=:b2b, productivity=3.6),
+        FirmTypeParams(firm_role=:b2c, productivity=4.8),
+        FirmTypeParams(firm_role=:b2c, productivity=3.4),
+    ]
     price_raise_rate::Float64 = 0.04
     price_cut_rate::Float64 = 0.04
     wage_raise_rate::Float64 = 0.05
@@ -117,6 +123,15 @@ Base.@kwdef mutable struct ModelParams
     conversion_prob::Float64 = 0.004
     min_residential_rent::Float64 = 1.0
     min_commercial_rent::Float64 = 1.0
+
+    io_matrix_seed::Int = 0
+    io_matrix_density::Float64 = 0.7
+    io_matrix_coefficient_min::Float64 = 0.5
+    io_matrix_coefficient_max::Float64 = 2.0
+    input_price_raise_rate::Float64 = 0.04
+    input_price_cut_rate::Float64 = 0.04
+    input_travel_cost_per_block::Float64 = 0.20
+    input_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=8, global_samples=16)
 
     solo_found_prob::Float64 = 0.010
     coalition_found_prob::Float64 = 0.006

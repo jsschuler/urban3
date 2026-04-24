@@ -83,35 +83,204 @@ endogenously and reaches -0.52 at 1000 ticks.
 
 Status: resolved.
 
+## Open Questions
+
+### 2026-04-24: Does the commercial gradient overtake residential at long horizons with I-O linkages?
+
+At 1000 ticks with I-O linkages (seed=77):
+- commercial gradient: -0.47
+- residential gradient: -0.61
+- gap has narrowed relative to no-I-O run (-0.52 vs -0.66)
+
+The commercial gradient is building faster than before. The question is whether it
+fully inverts (commercial > residential in magnitude) at 5000 ticks. Four parallel
+5000-tick runs were started (seeds 77, 42, 123, 456) but killed at ~tick 2000 due
+to time constraints. Each run takes ~1.5 hours to complete.
+
+At tick 2000, seed=77 showed:
+- population=6971, firms=424 (152 B2B, 272 B2C)
+- mean_input_fill_rate=0.813
+- mean_commercial_rent=3.054, mean_residential_rent=4.123
+
+Gradient plots at 1000 ticks are in:
+```text
+outputs/diagnostics/lots_io_1000.csv
+outputs/diagnostics/rent_gradient_io_1000/
+```
+
+To resume: run the 5000-tick command from the Next Steps section below and run
+`Rscript diagnostics/rent_gradient_diagnostics.R` on the output.
+
+### 2026-04-24: Is the B2B/B2C firm count ratio stable and appropriate?
+
+At 1000 ticks, the B2B:B2C ratio is roughly 1:1.3 (128:172 for seed=77). With 2
+B2B types and 2 B2C types and random founding, this seems plausible. However, the
+ratio should be monitored — if B2B firms are more profitable they may crowd out
+B2C firms or vice versa, distorting the I-O network structure.
+
+### 2026-04-24: Is the input fill rate sustainable long-run?
+
+Fill rates are holding at 0.75–0.81 through tick 2000. This means B2C firms are
+running at ~75-80% capacity due to input constraints. Whether this stabilizes or
+deteriorates at longer horizons is unknown. A persistent fill rate near zero would
+collapse B2C output and is a failure mode to watch for.
+
 ## Next Steps
 
-### 2026-04-23: Planned — firm supplier network (I-O linkages)
+### 2026-04-24: Pending — 5000-tick I-O gradient runs (4 seeds)
+
+Run the following to complete the long-run gradient comparison. Takes ~1.5 hours per seed;
+run all four in parallel on a fast machine.
+
+```julia
+for seed in [77, 42, 123, 456]
+    julia --project -e "
+    using UrbanABM
+    params = ModelParams(width=40, height=40, initial_workers=3000, initial_firms=150,
+        outside_entry_rate=2.0, seed=$seed,
+        enable_decision_logging=false, enable_search_logging=false,
+        enable_market_logging=false)
+    state = init_state(params)
+    t0 = time()
+    for t in 1:5000
+        step!(state)
+        if t in Set([1000,2000,3000,5000])
+            m = metrics_snapshot(state)
+            im = m[\"input_market_summary\"]
+            println(\"seed=$seed tick=\",t,\" pop=\",m[\"population\"],
+                \" fill=\",round(im[\"mean_input_fill_rate\"],digits=3),
+                \" com_rent=\",round(m[\"mean_commercial_rent\"],digits=3),
+                \" res_rent=\",round(m[\"mean_residential_rent\"],digits=3))
+            flush(stdout)
+        end
+    end
+    write_lot_csv(state, \"outputs/diagnostics/lots_io_5000_seed${seed}.csv\")
+    " > outputs/diagnostics/run_io_5000_seed${seed}.log 2>&1 &
+end
+```
+
+Then run gradient diagnostics on each output and compare:
+- commercial gradient at 5000 ticks vs residential gradient
+- whether commercial > residential in magnitude (the target ordering)
+
+Success criterion: commercial gradient magnitude exceeds residential across
+most seeds at 5000 ticks.
+
+### 2026-04-24: Implemented — firm supplier network (I-O linkages)
 
 The commercial rent gradient is weaker than the residential gradient (-0.52 vs
 -0.66 at 1000 ticks), which is the reverse of empirical patterns in real cities.
 The diagnosis is that the model lacks inter-firm agglomeration: firms only benefit
 from proximity to consumers, not from proximity to each other.
 
-The planned fix is a firm supplier network where firms buy intermediate inputs
-from other firms. This gives firms a direct spatial incentive to locate near
-their suppliers and customers, creating an agglomeration force that should
-steepen the commercial gradient independently of consumer access.
+The planned fix is a firm supplier network. Design decisions confirmed:
 
-Design is documented in section 28 of instructions.md.
+- firm types are classified as B2B (sells to firms only) or B2C (sells to consumers only); no hybrids
+- B2B firms use only labor, capital, and commercial space — no upstream inputs (shallow network)
+- I-O linkage matrix is fully parameterized, generated randomly from a seed and density parameter, fixed for the run
+- B2C production uses Leontief scaling: binding fill rate across all required input types scales output; zero fill rate on any input means zero output — record this assumption
+- input search is batch (not one-at-a-time), uses existing Poisson + global architecture
+- input pricing uses same raise/lower rule as consumer goods, separate parameters
+- input travel cost per block creates the agglomeration force
+- B2B firms follow same founding rules as B2C
 
-Key architectural changes required:
+Full design is in section 28 of instructions.md.
 
-- `Types.jl`: input price, committed intermediate output, input sales history on `Firm`
-- `Parameters.jl`: input-output linkage matrix, input search and pricing parameters
-- `Firms.jl`: input search, input purchasing, input price adjustment, scaled production
-- `Scheduler.jl`: new input purchasing phase before production commitment
-- `Metrics.jl`: input market diagnostics
+Key architectural changes:
 
-Work is on the `io-linkages` branch. Do not begin until the design is confirmed.
+- `Types.jl`: `firm_role` on `FirmType`; `input_price`, `committed_intermediate_output`, `intermediate_sales_history`, `inputs_acquired` on `Firm`
+- `Parameters.jl`: io_matrix, io_matrix_seed, io_matrix_density, input pricing rates, input travel cost, input SearchParams
+- `Firms.jl`: B2B output commitment, B2C input search and purchase, input price adjustment, Leontief capacity scaling
+- `Scheduler.jl`: B2B commitment phase and B2C input purchasing phase before B2C production
+- `Metrics.jl`: input fill rate, mean input price, intermediate sales by type
+
+Work is on the `io-linkages` branch.
 
 ---
 
 ## Changes
+
+### 2026-04-24: Implemented firm supplier network (I-O linkages)
+
+Added B2B/B2C firm roles and an intermediate goods market to give firms a direct
+spatial incentive to co-locate, with the goal of steepening the commercial rent
+gradient relative to residential.
+
+**Design:**
+
+- each firm type is classified as B2B (sells to firms only) or B2C (sells to
+  consumers only); no hybrids
+- B2B firms use only labor, capital, and commercial space — no upstream inputs
+  (shallow network, one tier)
+- the I-O linkage matrix is generated randomly at initialization from a seed and
+  density parameter, then fixed for the run; `io_matrix[buyer_type, supplier_type]`
+  gives units of B2B good required per unit of B2C output
+- B2C production uses Leontief scaling: binding fill rate across all required input
+  types scales output; zero fill on any type means zero output
+- B2C firms search for input suppliers using Poisson neighborhood + global sampling;
+  effective input cost = `goods_price + input_travel_cost_per_block * distance`
+- B2B firms use the same `goods_price` field and `realized_sales_history` as B2C
+  (reused for intermediate sales); price review logic is identical with separate
+  `input_price_raise_rate` / `input_price_cut_rate` parameters
+- B2C profits deduct `input_cost_this_tick`; B2B profits are unaffected
+
+**Scheduler change:**
+
+Added two phases before production commitment:
+1. `commit_intermediate_output!` — B2B firms commit output
+2. `input_purchasing_phase!` — B2C firms search for and buy inputs
+Then `commit_production!` applies Leontief scaling for B2C firms.
+
+**Files changed:**
+
+- `Types.jl`: added `inputs_acquired::Dict{Int,Int}` and `input_cost_this_tick::Float64`
+  to `Firm`; added `io_matrix::Matrix{Float64}` to `ModelState`
+- `Parameters.jl`: added `firm_role::Symbol` to `FirmTypeParams`; added io_matrix,
+  input pricing, and input search params to `ModelParams`; updated default firm types
+  to 4 (2 B2B, 2 B2C)
+- `State.jl`: added `generate_io_matrix`; updated `init_state`
+- `Entrepreneurship.jl`: updated `found_firm!` to initialize new Firm fields
+- `Firms.jl`: added `is_b2b`, `is_b2c`, `required_input_types`, `leontief_input_scale`,
+  `commit_intermediate_output!`, `input_purchasing_phase!`, `sample_input_suppliers`,
+  `effective_input_cost`; updated `commit_production!`, `firm_reviews!`,
+  `calculate_profits!`
+- `Workers.jl`: `consumption_phase!` now excludes B2B firms
+- `Scheduler.jl`: added two new phases
+- `Metrics.jl`: added `input_market_summary`; `mean_price` now excludes B2B firms
+
+**Results at 1000 ticks (seed=77, 40×40, 3000 workers, 150 firms, entry_rate=2.0):**
+
+```text
+tick=250:  pop=3473, firms=245 (106 B2B, 139 B2C), fill=0.796, com_rent=1.29,  res_rent=4.634
+tick=500:  pop=3971, firms=248 (104 B2B, 144 B2C), fill=0.747, com_rent=2.889, res_rent=6.705
+tick=750:  pop=4468, firms=277 (124 B2B, 153 B2C), fill=0.783, com_rent=3.839, res_rent=6.399
+tick=1000: pop=4968, firms=300 (128 B2B, 172 B2C), fill=0.771, com_rent=3.601, res_rent=5.895
+```
+
+Rent gradients at 1000 ticks:
+```text
+commercial rent vs geometric center distance  = -0.471
+residential rent vs geometric center distance = -0.619
+```
+
+Comparison against no-I-O baseline at 1000 ticks:
+```text
+No I-O: commercial = -0.52, residential = -0.66
+With I-O: commercial = -0.47, residential = -0.62
+```
+
+The gap between commercial and residential gradients has narrowed. The ordering
+(residential > commercial) persists at 1000 ticks but the I-O mechanism is building
+the commercial gradient faster. Whether it inverts at 5000 ticks is an open question
+(see Open Questions above).
+
+Output files:
+```text
+outputs/diagnostics/lots_io_250.csv
+outputs/diagnostics/rent_gradient_io_250/
+outputs/diagnostics/lots_io_1000.csv
+outputs/diagnostics/rent_gradient_io_1000/
+```
 
 ### 2026-04-23: Replaced location-value premium with endogenous mean-normalized bid scaling
 

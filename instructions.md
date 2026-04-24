@@ -829,93 +829,119 @@ Please implement this system incrementally, starting with a minimal but working 
 
 Firms should sell intermediate inputs to other firms as well as final goods to consumers. This creates input-output linkages between firm types and gives firms a direct spatial incentive to locate near their suppliers and customers — an agglomeration force independent of consumer access. Without this, the commercial rent gradient is weaker than the residential gradient, contrary to empirical patterns in real cities.
 
-## 28.2 Input-output structure
+## 28.2 Firm roles: B2B and B2C
 
-Each firm type requires intermediate inputs from one or more other firm types. The input requirements are fixed by firm type and parameterized.
+Each firm type is assigned one of two roles:
 
-- each firm type has a vector of required input types and quantities per unit of output
-- inputs must be purchased each tick before production can proceed at full capacity
-- if a firm cannot source all required inputs, production is reduced proportionally
+- **B2B**: sells intermediate goods exclusively to other firms; does not sell to consumers
+- **B2C**: sells final goods exclusively to consumers; buys intermediate inputs from B2B firms
 
-Do not model self-supply within a firm. Firms must buy inputs from other active firms on the market.
+There is no hybrid role in this version. A firm type is one or the other.
 
-## 28.3 Input markets
+B2B firms use only labor, capital, and commercial space as inputs. They do not themselves require intermediate inputs. This keeps the supply network shallow (one tier of intermediates feeding final goods producers). Depth can be added later.
 
-Intermediate goods are traded in a separate input market from the consumer goods market.
+## 28.3 Input-output network
 
-- supplier firms post an input price alongside their consumer goods price
-- buyer firms search for and purchase inputs tick by tick
-- input purchases are settled before the production phase of the same tick
-- unsold intermediate output is discarded at the end of the tick (no inventory, consistent with section 10.4)
+The input-output network is defined at the firm-type level as a matrix of input requirements:
 
-## 28.4 Input search
+- the matrix is fully parameterized: every B2C type may require inputs from every B2B type
+- coefficients are drawn randomly at initialization and fixed for the run
+- each coefficient specifies units of a given B2B good required per unit of B2C output
+- zero coefficients are allowed (a B2C type may not require all B2B types)
 
-Firms search for input suppliers using the same general search architecture as workers and consumers:
+Do not hardcode a specific network topology. Generate the matrix from parameters and a seed so it can be varied across experiments.
+
+Do not model self-supply. Firms must buy inputs from other active firms on the market.
+
+## 28.4 Leontief production for B2C firms
+
+B2C production uses Leontief scaling over input availability:
+
+- compute the fill rate for each required input type: `fill_rate = units_acquired / units_required`
+- the binding fill rate is the minimum across all required input types
+- production capacity is scaled by the binding fill rate
+- if any required input has fill rate zero, production is zero
+
+There is no input substitution. Record that this is a Leontief assumption so it can be revisited later.
+
+## 28.5 Input markets
+
+Intermediate goods are traded in a separate market from consumer goods:
+
+- B2B firms commit intermediate output at the start of the production phase, before B2C firms purchase
+- B2C firms search for and purchase inputs before committing their own output
+- input purchases are settled before B2C production commitment
+- unsold intermediate output is discarded at end of tick — no inventory (consistent with section 10.4)
+
+## 28.6 Input search
+
+B2C firms search for each required input type using the same architecture as all other search:
 - Poisson neighborhood search
 - plus random global sampling
 
-Proximity to suppliers matters: nearby suppliers are cheaper to source from in effective cost terms, or equivalently, firms prefer nearby suppliers at equal price, parameterized by an input travel cost.
+Firms prefer nearby suppliers: proximity reduces effective input cost via a parameterized input travel cost per block (taxicab distance). Among sampled suppliers of a given type, prefer the one with lowest effective cost (posted price plus travel cost).
 
-## 28.5 Supplier pricing
+Input search is batch, not one-unit-at-a-time. Each tick a B2C firm searches for and purchases its full required quantity of each input type from the best available sampled supplier of that type.
 
-Supplier firms post an input price. Use the same simple adjustment rule as consumer goods:
+## 28.7 Input pricing
+
+B2B firms post an input price. Use the same simple adjustment rule as consumer goods (section 11.1):
 - if all committed intermediate output is sold, raise input price
 - if not all committed intermediate output is sold, lower input price
 
-Input prices are tracked separately from consumer goods prices.
+Input prices are tracked separately from consumer goods prices. Use separate adjustment rate parameters.
 
-## 28.6 Production with inputs
+## 28.8 Agglomeration mechanism
 
-Modify the production function so that intermediate input availability scales output:
-- full input supply → full production capacity as currently computed
-- partial input supply → production scales down proportionally
-- zero input supply → zero output
+The input travel cost creates an endogenous agglomeration force with no hard-coded center:
 
-Keep this simple in v1. Do not model input substitution.
+- B2C firms face lower effective input costs when located near B2B suppliers
+- B2B firms earn more sales when located near dense clusters of B2C buyers
+- both forces pull toward spatial co-location of B2B and B2C commercial activity
+- this should steepen the commercial rent gradient relative to residential, correcting the current ordering
 
-## 28.7 Agglomeration effect
+## 28.9 Entrepreneurship
 
-The input search and travel-cost mechanism creates an endogenous agglomeration force:
-- firms that source inputs locally face lower effective input costs
-- this gives firms a direct incentive to locate near their suppliers
-- suppliers have an incentive to locate where buyer firms are dense
-- this mutual pull should concentrate commercial activity spatially and steepen the commercial rent gradient relative to residential
+B2B firms follow the same founding rules as B2C firms (section 18). Agents with sufficient savings may found a B2B or B2C firm. Firm type — including role — is drawn according to the parameterized type-selection rule.
 
-## 28.8 Scheduler changes
+## 28.10 Scheduler changes
 
-Add an input purchasing phase before production commitment:
+Insert an input purchasing phase between price reviews and production commitment:
 
-Updated tick order:
-1. firm price and wage reviews (including input price reviews)
-2. firm input search and purchases
-3. firm production commitment (scaled by input availability)
-4. consumer goods search and purchases
-5. realized firm sales and profit calculation
-6. firm contraction / expansion reviews
-7. layoffs / hiring completion
-8. entrepreneurship / coalition formation
-9. worker job search
-10. worker housing search
-11. rent updates by master developer
-12. unit additions / conversions
-13. outside entry
+1. firm price and wage reviews (including input price reviews for B2B firms)
+2. B2B firm production commitment (intermediate output)
+3. B2C firm input search and purchases
+4. B2C firm production commitment (scaled by Leontief fill rate)
+5. consumer goods search and purchases
+6. realized firm sales and profit calculation (both B2B and B2C)
+7. firm contraction / expansion reviews
+8. layoffs / hiring completion
+9. entrepreneurship / coalition formation
+10. worker job search
+11. worker housing search
+12. rent updates by master developer
+13. unit additions / conversions
+14. outside entry
 
-## 28.9 Parameters
+## 28.11 Parameters
 
-Add parameter groups for:
-- input requirements matrix (by firm type pair: buyer type → supplier type → units per output unit)
-- input price adjustment rates
-- input travel cost per block
-- input search Poisson intensity, radius, global sample count
+Add the following parameter groups:
 
-## 28.10 Architectural changes required
+- `io_matrix`: input requirement coefficients (B2C type × B2B type → units per output unit); generated randomly from a seed and density parameter
+- `io_matrix_seed`: random seed for matrix generation
+- `io_matrix_density`: probability any given B2C–B2B pair has a nonzero coefficient
+- `input_price_increase_rate`: B2B price increase when sold out
+- `input_price_decrease_rate`: B2B price decrease when unsold output remains
+- `input_travel_cost_per_block`: effective cost penalty per taxicab block between buyer and supplier commercial lots
+- `input_search`: `SearchParams` for firm-to-firm input search (reuse existing structure)
 
-This is a major addition. Key changes across modules:
+## 28.12 Architectural changes required
 
-- `Types.jl`: add input price, committed intermediate output, realized input sales, and input sales history to `Firm`; add supplier and buyer tracking
-- `Parameters.jl`: add input-output linkage matrix and input search/pricing parameters
-- `Firms.jl`: add input search, input purchasing, input price adjustment, and scaled production
-- `Scheduler.jl`: add input purchasing phase in correct tick position
-- `State.jl`: add intermediate goods market state if needed
-- `Metrics.jl`: add input market diagnostics (input fill rate, mean input price, input sales by type)
-- `Search.jl`: extend or reuse search architecture for firm-to-firm input search
+Key changes across modules:
+
+- `Types.jl`: add `firm_role` (`:b2b` or `:b2c`) to `FirmType`; add `input_price`, `committed_intermediate_output`, `intermediate_sales_history`, and `inputs_acquired` to `Firm`
+- `Parameters.jl`: add io_matrix and input search/pricing parameters
+- `Firms.jl`: add B2B output commitment, B2C input search and purchase, input price adjustment, Leontief scaling of production capacity
+- `Scheduler.jl`: add B2B commitment phase and B2C input purchasing phase in correct tick positions
+- `Metrics.jl`: add input market diagnostics — input fill rate by type, mean input price by type, intermediate sales by type
+- `Search.jl`: reuse existing search architecture for input search; no structural changes expected

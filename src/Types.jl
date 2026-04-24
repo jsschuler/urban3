@@ -54,6 +54,8 @@ mutable struct Firm
     profit_history::Vector{Float64}
     active::Bool
     startup_pending::Bool
+    inputs_acquired::Dict{Int,Int}   # b2b firm_type => units acquired this tick (B2C only)
+    input_cost_this_tick::Float64    # total input spending this tick (B2C only)
 end
 
 mutable struct TickEvents
@@ -200,6 +202,7 @@ mutable struct ModelState
     consumer_access_by_lot::Vector{Float64}
     job_access_by_lot::Vector{Float64}
     commercial_bid_buffer::Vector{CommercialBidProposal}
+    io_matrix::Matrix{Float64}   # io_matrix[buyer_type, supplier_type] = units per output unit
 end
 
 employment_state(w::Worker) = isnothing(w.employer_id) ? Unemployed() : Employed()
