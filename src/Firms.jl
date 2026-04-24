@@ -299,7 +299,8 @@ function expected_site_sales_units(state::ModelState, f::Firm, lot_id::Int)
     end
 
     base_sales = max(1.0, recent_mean_sales(f, state.params.commercial_bid_recent_sales_lookback))
-    access_scale = (candidate_access + 1.0) / (anchor_access + 1.0)
+    mean_access = mean(state.consumer_access_by_lot)
+    access_scale = (candidate_access + 1.0) / (mean_access + 1.0)
     return max(1.0, base_sales * access_scale / competition)
 end
 
@@ -308,10 +309,7 @@ function expected_site_revenue(state::ModelState, f::Firm, lot_id::Int)
 end
 
 function commercial_bid_amount(state::ModelState, f::Firm, lot_id::Int)
-    revenue_component = state.params.commercial_bid_share * expected_site_revenue(state, f, lot_id)
-    gross_value = commercial_location_gross_value(state, f, lot_id)
-    location_premium = max(0.0, gross_value) * state.params.commercial_bid_location_value_weight
-    raw_bid = revenue_component + location_premium
+    raw_bid = state.params.commercial_bid_share * expected_site_revenue(state, f, lot_id)
     return clamp(raw_bid, state.params.min_commercial_rent, state.params.commercial_bid_cap)
 end
 

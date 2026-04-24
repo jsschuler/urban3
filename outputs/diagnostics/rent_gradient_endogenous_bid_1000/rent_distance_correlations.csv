@@ -1,0 +1,7 @@
+"rent","distance","correlation"
+"residential_rent","geometric_center",-0.657714476603477
+"commercial_rent","geometric_center",-0.524530997666365
+"residential_rent","residential_occupancy_centroid",-0.686903593845962
+"commercial_rent","residential_occupancy_centroid",-0.520801603829309
+"residential_rent","commercial_occupancy_centroid",-0.681034515204768
+"commercial_rent","commercial_occupancy_centroid",-0.526201616117327

@@ -65,7 +65,6 @@ Base.@kwdef mutable struct ModelParams
     firm_job_access_weight::Float64 = 0.03
     firm_employee_commute_weight::Float64 = 0.25
     commercial_bid_share::Float64 = 0.12
-    commercial_bid_location_value_weight::Float64 = 1.0
     commercial_bid_cap::Float64 = 250.0
     commercial_rent_bid_adjustment_rate::Float64 = 0.30
     commercial_bid_recent_sales_lookback::Int = 12
