@@ -85,6 +85,30 @@ Status: resolved.
 
 ## Next Steps
 
+### 2026-04-23: Planned — firm supplier network (I-O linkages)
+
+The commercial rent gradient is weaker than the residential gradient (-0.52 vs
+-0.66 at 1000 ticks), which is the reverse of empirical patterns in real cities.
+The diagnosis is that the model lacks inter-firm agglomeration: firms only benefit
+from proximity to consumers, not from proximity to each other.
+
+The planned fix is a firm supplier network where firms buy intermediate inputs
+from other firms. This gives firms a direct spatial incentive to locate near
+their suppliers and customers, creating an agglomeration force that should
+steepen the commercial gradient independently of consumer access.
+
+Design is documented in section 28 of instructions.md.
+
+Key architectural changes required:
+
+- `Types.jl`: input price, committed intermediate output, input sales history on `Firm`
+- `Parameters.jl`: input-output linkage matrix, input search and pricing parameters
+- `Firms.jl`: input search, input purchasing, input price adjustment, scaled production
+- `Scheduler.jl`: new input purchasing phase before production commitment
+- `Metrics.jl`: input market diagnostics
+
+Work is on the `io-linkages` branch. Do not begin until the design is confirmed.
+
 ---
 
 ## Changes

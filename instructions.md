@@ -820,3 +820,102 @@ Do not simplify away these design commitments:
 # 27. Request to the coding assistant
 
 Please implement this system incrementally, starting with a minimal but working Julia simulation core that respects the model logic and scheduler. Then add websocket communication, GUI support, and Blender integration in modular stages.
+
+---
+
+# 28. Firm supplier network
+
+## 28.1 Motivation
+
+Firms should sell intermediate inputs to other firms as well as final goods to consumers. This creates input-output linkages between firm types and gives firms a direct spatial incentive to locate near their suppliers and customers — an agglomeration force independent of consumer access. Without this, the commercial rent gradient is weaker than the residential gradient, contrary to empirical patterns in real cities.
+
+## 28.2 Input-output structure
+
+Each firm type requires intermediate inputs from one or more other firm types. The input requirements are fixed by firm type and parameterized.
+
+- each firm type has a vector of required input types and quantities per unit of output
+- inputs must be purchased each tick before production can proceed at full capacity
+- if a firm cannot source all required inputs, production is reduced proportionally
+
+Do not model self-supply within a firm. Firms must buy inputs from other active firms on the market.
+
+## 28.3 Input markets
+
+Intermediate goods are traded in a separate input market from the consumer goods market.
+
+- supplier firms post an input price alongside their consumer goods price
+- buyer firms search for and purchase inputs tick by tick
+- input purchases are settled before the production phase of the same tick
+- unsold intermediate output is discarded at the end of the tick (no inventory, consistent with section 10.4)
+
+## 28.4 Input search
+
+Firms search for input suppliers using the same general search architecture as workers and consumers:
+- Poisson neighborhood search
+- plus random global sampling
+
+Proximity to suppliers matters: nearby suppliers are cheaper to source from in effective cost terms, or equivalently, firms prefer nearby suppliers at equal price, parameterized by an input travel cost.
+
+## 28.5 Supplier pricing
+
+Supplier firms post an input price. Use the same simple adjustment rule as consumer goods:
+- if all committed intermediate output is sold, raise input price
+- if not all committed intermediate output is sold, lower input price
+
+Input prices are tracked separately from consumer goods prices.
+
+## 28.6 Production with inputs
+
+Modify the production function so that intermediate input availability scales output:
+- full input supply → full production capacity as currently computed
+- partial input supply → production scales down proportionally
+- zero input supply → zero output
+
+Keep this simple in v1. Do not model input substitution.
+
+## 28.7 Agglomeration effect
+
+The input search and travel-cost mechanism creates an endogenous agglomeration force:
+- firms that source inputs locally face lower effective input costs
+- this gives firms a direct incentive to locate near their suppliers
+- suppliers have an incentive to locate where buyer firms are dense
+- this mutual pull should concentrate commercial activity spatially and steepen the commercial rent gradient relative to residential
+
+## 28.8 Scheduler changes
+
+Add an input purchasing phase before production commitment:
+
+Updated tick order:
+1. firm price and wage reviews (including input price reviews)
+2. firm input search and purchases
+3. firm production commitment (scaled by input availability)
+4. consumer goods search and purchases
+5. realized firm sales and profit calculation
+6. firm contraction / expansion reviews
+7. layoffs / hiring completion
+8. entrepreneurship / coalition formation
+9. worker job search
+10. worker housing search
+11. rent updates by master developer
+12. unit additions / conversions
+13. outside entry
+
+## 28.9 Parameters
+
+Add parameter groups for:
+- input requirements matrix (by firm type pair: buyer type → supplier type → units per output unit)
+- input price adjustment rates
+- input travel cost per block
+- input search Poisson intensity, radius, global sample count
+
+## 28.10 Architectural changes required
+
+This is a major addition. Key changes across modules:
+
+- `Types.jl`: add input price, committed intermediate output, realized input sales, and input sales history to `Firm`; add supplier and buyer tracking
+- `Parameters.jl`: add input-output linkage matrix and input search/pricing parameters
+- `Firms.jl`: add input search, input purchasing, input price adjustment, and scaled production
+- `Scheduler.jl`: add input purchasing phase in correct tick position
+- `State.jl`: add intermediate goods market state if needed
+- `Metrics.jl`: add input market diagnostics (input fill rate, mean input price, input sales by type)
+- `Search.jl`: extend or reuse search architecture for firm-to-firm input search
