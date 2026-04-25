@@ -2832,6 +2832,81 @@ Implication for next changes:
 
 
 #### PASTED IN AFTER USAGE LIMIT
-he diagnosis is definitive: at tick 10, can_hire=0 across all 150 firms. The min_hire_cash_ticks=500 gate requires (payroll + posted_wage) × 500 in cash. With 3 initial workers at wage=10 (payroll=30), hiring a 4th needs (30+11)×500=20,500 — exceeding initial cash of 15,000 from day 1. Workers leave firms, can't be replaced, and all tiers spiral to 0 workers.
+the diagnosis is definitive: at tick 10, can_hire=0 across all 150 firms. The min_hire_cash_ticks=500 gate requires (payroll + posted_wage) × 500 in cash. With 3 initial workers at wage=10 (payroll=30), hiring a 4th needs (30+11)×500=20,500 — exceeding initial cash of 15,000 from day 1. Workers leave firms, can't be replaced, and all tiers spiral to 0 workers.
+
+---
+
+### 2026-04-25: Wage spiral and hiring re-lock — open problem
+
+#### Symptom
+
+Even after reducing `min_hire_cash_ticks` from 500 to 300 (which unblocked hiring at startup), the hiring market re-locks by tick 200–300. Diagnostic at tick 300:
+
+```text
+T3 (n=8, dead=3): workers=0.62  posted_wage=88.0  cash=16,414  hire_thresh=39,157  can_hire=0
+```
+
+`posted_wage` spiraled from 10 at startup to 88 by tick 300. With 1 remaining worker (payroll=10), the gate requires (10 + 88) × 300 = 29,400 to hire — nearly double available cash. The spiral continues unchecked.
+
+#### Three interacting loops
+
+**Loop 1 — Persistent vacancy signal.**
+The wage-raise condition in `firm_reviews!` is:
+
+```julia
+has_vacancy = length(f.worker_ids) < state.params.max_workers_per_firm
+f.posted_wage *= has_vacancy ? (1 + wage_raise_rate) : (1 - wage_cut_rate)
+```
+
+Firms start with 3 workers and `max_workers_per_firm=18`, so `has_vacancy=true` from tick 1 for all firms. The vacancy signal never clears. With `wage_review_prob=0.20` and `wage_raise_rate=0.05`, expected compound growth is 1.05^(0.20×t) — doubling in ~70 ticks, tripling in ~110 ticks. The diagnostic of 88 at tick 300 is consistent: 1.05^(0.20×300) ≈ 9× baseline.
+
+**Loop 2 — Hiring gate that rises with the wage it gates.**
+`hire_worker!` blocks when `cash < (current_payroll + posted_wage) × min_hire_cash_ticks`. As `posted_wage` rises, the threshold rises proportionally. The gate blocks hiring precisely because the wage spiraled. The two quantities chase each other: a higher wage makes the gate harder to pass, which preserves the vacancy, which triggers another wage raise.
+
+Crucially, `f.current_worker_wages` is set at hire time and does not update when `posted_wage` rises. Existing workers' actual wages are frozen at their hire rate. The payroll does not increase with the spiral — only the hiring threshold does. The cash drain from the spiral is zero; the gate cost is entirely hypothetical (the cost of a future hire that never happens).
+
+**Loop 3 — Contraction amplifies vacancies.**
+When modal sales are low, `firm_contraction_expansion!` fires workers until `production_capacity ≤ modal_sales`. A firm with low sales sheds workers down to 1. With 1 worker and `max_workers_per_firm=18`, `has_vacancy=true` again. Wage reviews fire. Posted wage rises further. Eventually the last remaining worker quits for a higher-wage competitor (job switch fires when another firm posts 8%+ above current wage). The firm drops to 0 workers and is liquidated.
+
+#### Root misdiagnosis in the wage-raise rule
+
+The wage-raise signal is designed to mean: "I have a vacancy and workers are choosing competitors over me — I need to offer more." But the actual cause of the persistent vacancy is "my cash gate is blocking me from accepting workers who want to come." Raising wages makes the gate harder to pass, not easier. The rule conflates two fundamentally different reasons for failing to hire:
+
+1. **Demand-side failure**: workers are not showing up at this wage; raise the wage to attract them.
+2. **Supply-side failure**: workers are showing up but the cash gate blocks the hire; raising the wage makes the gate harder, not easier.
+
+The current rule treats both cases identically.
+
+#### Three possible directions (not yet resolved)
+
+**Option A — Conditional raise: only raise if cash gate would allow hiring at the new wage.**
+Before raising, check whether the firm could actually afford to hire at the new rate. If not, hold the wage flat (or let it drift down). This directly breaks the loop at the mechanism that causes it.
+
+```julia
+new_wage = f.posted_wage * (1 + wage_raise_rate)
+current_payroll = sum(values(f.current_worker_wages); init=0.0)
+can_afford = f.cash >= (current_payroll + new_wage) * min_hire_cash_ticks
+if has_vacancy && can_afford
+    f.posted_wage = new_wage
+elseif !has_vacancy
+    f.posted_wage *= (1 - wage_cut_rate)
+end
+```
+
+Simple, directly addresses the mechanism. Risk: cash-poor firms in genuine labor-market competition can no longer signal higher wages.
+
+**Option B — Demand-based vacancy signal.**
+Replace `max_workers_per_firm` as the vacancy ceiling with the labor target implied by modal sales — the same target the contraction rule uses. A firm that just shed workers because sales are low is not trying to hire; it should not raise wages. Only firms whose modal-sales target exceeds current worker count should raise wages.
+
+This is more economically grounded: firms set wages to attract the workers they actually want, not to fill some maximum capacity they don't need. But it requires computing the labor target outside the contraction block, where it is currently computed.
+
+**Option C — Reduce max_workers_per_firm.**
+If the cap were 6 instead of 18, firms start at 50% capacity and have only 3 slots to fill. The spiral is proportionally slower and firms can actually reach full capacity before the gate re-locks. This papers over the mechanism rather than fixing it, but buys time to test other dynamics.
+
+Status: open. Need to decide between Options A and B before implementing.
+
+#### Related issue — B2B spatial disadvantage (noted, not yet addressed)
+
+B2B firms (T1, T2) use the consumer-access signal for commercial bidding, the same as B2C. This places them in competition for central lots near consumers, where consumer-facing revenue is highest but B2B revenue is determined by proximity to downstream buyers, not consumers. B2B firms end up either at expensive central locations they can't justify, or at peripheral lots where workers don't find them in job search. Workers spatially cluster near T3 (central), leaving T1/T2 (peripheral) understaffed. This is a separate structural problem from the wage spiral but compounds it for B2B tiers.
 
 The fix is to lower min_hire_cash_ticks. The threshold for initial hiring to be possible: (30+10)×X ≤ 15,000 → X ≤ 375. I'll use 300 to leave margin against wage inflation.
