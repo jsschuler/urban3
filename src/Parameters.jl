@@ -17,7 +17,9 @@ Base.@kwdef struct FirmTypeParams
     space_elasticity::Float64 = 0.25
     process_price::Float64 = 60.0
     capital_price::Float64 = 25.0
-    firm_role::Symbol = :b2c   # :b2b sells to firms only; :b2c sells to consumers only
+    supply_tier::Int = 3   # 1=upstream B2B (no inputs), 2=midstream B2B, 3=final B2C (sells to consumers)
+    initial_goods_price_min::Float64 = 4.0
+    initial_goods_price_max::Float64 = 6.0
 end
 
 Base.@kwdef mutable struct ModelParams
@@ -31,7 +33,7 @@ Base.@kwdef mutable struct ModelParams
     initial_residential_rent_max::Float64 = 3.0
     initial_commercial_rent_min::Float64 = 4.5
     initial_commercial_rent_max::Float64 = 7.5
-    firm_type_count::Int = 4
+    firm_type_count::Int = 6
     seed::Int = 42
 
     goods_search::SearchParams = SearchParams(max_expansions=1, radius_step=3, global_multiplier=1.75)
@@ -85,10 +87,12 @@ Base.@kwdef mutable struct ModelParams
     network_spillover_radius::Int = 8
 
     firm_types::Vector{FirmTypeParams} = [
-        FirmTypeParams(firm_role=:b2b, productivity=4.0),
-        FirmTypeParams(firm_role=:b2b, productivity=3.6),
-        FirmTypeParams(firm_role=:b2c, productivity=4.8),
-        FirmTypeParams(firm_role=:b2c, productivity=3.4),
+        FirmTypeParams(supply_tier=1, productivity=5.5, initial_goods_price_min=3.0, initial_goods_price_max=5.0),
+        FirmTypeParams(supply_tier=1, productivity=5.5, initial_goods_price_min=3.0, initial_goods_price_max=5.0),
+        FirmTypeParams(supply_tier=2, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=7.0),
+        FirmTypeParams(supply_tier=2, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=7.0),
+        FirmTypeParams(supply_tier=3, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=8.0),
+        FirmTypeParams(supply_tier=3, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=8.0),
     ]
     price_raise_rate::Float64 = 0.04
     price_cut_rate::Float64 = 0.04
@@ -125,13 +129,15 @@ Base.@kwdef mutable struct ModelParams
     min_commercial_rent::Float64 = 1.0
 
     io_matrix_seed::Int = 0
-    io_matrix_density::Float64 = 0.7
-    io_matrix_coefficient_min::Float64 = 0.5
-    io_matrix_coefficient_max::Float64 = 2.0
+    io_matrix_density::Float64 = 0.5
+    io_matrix_coefficient_min::Float64 = 0.50
+    io_matrix_coefficient_max::Float64 = 0.75
     input_price_raise_rate::Float64 = 0.04
     input_price_cut_rate::Float64 = 0.04
     input_travel_cost_per_block::Float64 = 0.20
     input_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=8, global_samples=16)
+    outside_input_prices::Vector{Float64} = [3.5, 5.5]
+    outside_input_distance::Float64 = 5.0
 
     solo_found_prob::Float64 = 0.010
     coalition_found_prob::Float64 = 0.006
@@ -139,6 +145,10 @@ Base.@kwdef mutable struct ModelParams
     coalition_startup_savings::Float64 = 180.0
     coalition_size_min::Int = 2
     coalition_size_max::Int = 5
+    initial_firm_cash::Float64 = 15_000.0
+    initial_hire_per_firm::Int = 3
+    startup_production_target::Int = 2
+    min_hire_cash_ticks::Int = 200
 
     outside_entry_rate::Float64 = 3.0
     blender_update_every::Int = 5

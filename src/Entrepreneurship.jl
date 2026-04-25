@@ -15,7 +15,7 @@ function entrepreneurship_phase!(state::ModelState)
     end
 end
 
-function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capital::Float64)
+function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capital::Float64, initial_cash::Float64=startup_capital)
     isempty(founder_ids) && return nothing
     firm_id = length(state.firms) + 1
     total_savings = sum(state.workers[id].savings for id in founder_ids)
@@ -31,9 +31,10 @@ function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capita
         state.params.base_wage * (0.9 + 0.2 * rand(state.rng)),
         Int[], Dict{Int,Float64}(),
         2, 1, Dict{Int,Int}(),
-        4.0 + rand(state.rng) * 2.0,
+        state.params.firm_types[ftype].initial_goods_price_min +
+            rand(state.rng) * (state.params.firm_types[ftype].initial_goods_price_max - state.params.firm_types[ftype].initial_goods_price_min),
         0, 0, Int[], Float64[], true, true,
-        Dict{Int,Int}(), 0.0)
+        Dict{Int,Int}(), 0.0, initial_cash)
     push!(state.firms, firm)
     for (id, share) in shares
         state.workers[id].ownership_shares[firm_id] = share

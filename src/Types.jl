@@ -54,8 +54,9 @@ mutable struct Firm
     profit_history::Vector{Float64}
     active::Bool
     startup_pending::Bool
-    inputs_acquired::Dict{Int,Int}   # b2b firm_type => units acquired this tick (B2C only)
-    input_cost_this_tick::Float64    # total input spending this tick (B2C only)
+    inputs_acquired::Dict{Int,Int}   # b2b firm_type => units acquired this tick
+    input_cost_this_tick::Float64    # total input spending this tick
+    cash::Float64                    # current cash balance; insolvency (< 0) triggers liquidation
 end
 
 mutable struct TickEvents

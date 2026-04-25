@@ -1,5 +1,7 @@
-is_b2b(state::ModelState, f::Firm) = state.params.firm_types[f.firm_type].firm_role == :b2b
-is_b2c(state::ModelState, f::Firm) = state.params.firm_types[f.firm_type].firm_role == :b2c
+firm_supply_tier(state::ModelState, f::Firm) = state.params.firm_types[f.firm_type].supply_tier
+max_supply_tier(state::ModelState) = maximum(ft.supply_tier for ft in state.params.firm_types)
+is_b2b(state::ModelState, f::Firm) = firm_supply_tier(state, f) < max_supply_tier(state)
+is_b2c(state::ModelState, f::Firm) = firm_supply_tier(state, f) == max_supply_tier(state)
 
 function required_input_types(state::ModelState, f::Firm)
     row = @view state.io_matrix[f.firm_type, :]
@@ -70,14 +72,26 @@ end
 function commit_intermediate_output!(state::ModelState)
     for f in active_firms(state)
         is_b2c(state, f) && continue
+        isempty(required_input_types(state, f)) || continue   # skip tiers with input requirements
         f.committed_output = production_capacity(state, f, state.params)
         f.realized_sales_this_tick = 0
     end
 end
 
-function input_purchasing_phase!(state::ModelState)
+function commit_b2b_with_inputs!(state::ModelState)
     for f in active_firms(state)
-        is_b2b(state, f) && continue
+        is_b2c(state, f) && continue
+        isempty(required_input_types(state, f)) && continue   # skip tier 1 (no inputs)
+        cap = production_capacity(state, f, state.params)
+        scale = leontief_input_scale(state, f)
+        f.committed_output = floor(Int, scale * cap)
+        f.realized_sales_this_tick = 0
+    end
+end
+
+function input_purchasing_phase!(state::ModelState, buyer_tier::Int)
+    for f in active_firms(state)
+        firm_supply_tier(state, f) != buyer_tier && continue
         empty!(f.inputs_acquired)
         f.input_cost_this_tick = 0.0
         cap = production_capacity(state, f, state.params)
@@ -85,17 +99,32 @@ function input_purchasing_phase!(state::ModelState)
         for (b2b_type, coeff) in required_input_types(state, f)
             units_needed = ceil(Int, coeff * cap)
             units_needed == 0 && continue
+            supplier_tier = state.params.firm_types[b2b_type].supply_tier
+            outside_base = supplier_tier <= length(state.params.outside_input_prices) ?
+                state.params.outside_input_prices[supplier_tier] : Inf
+            outside_eff = outside_base + state.params.input_travel_cost_per_block *
+                state.params.outside_input_distance
+            units_bought = 0
             candidates = sample_input_suppliers(state, f, b2b_type)
-            isempty(candidates) && continue
-            supplier = candidates[argmin([effective_input_cost(state, f, sup) for sup in candidates])]
-            available = supplier.committed_output - supplier.realized_sales_this_tick
-            units_bought = min(units_needed, available)
-            units_bought == 0 && continue
-            supplier.realized_sales_this_tick += units_bought
-            f.inputs_acquired[b2b_type] = get(f.inputs_acquired, b2b_type, 0) + units_bought
-            dist = min_supplier_distance(state, f, supplier)
-            f.input_cost_this_tick += units_bought * supplier.goods_price +
-                state.params.input_travel_cost_per_block * dist * units_bought
+            if !isempty(candidates)
+                supplier = candidates[argmin([effective_input_cost(state, f, sup) for sup in candidates])]
+                if effective_input_cost(state, f, supplier) <= outside_eff
+                    available = supplier.committed_output - supplier.realized_sales_this_tick
+                    units_bought = min(units_needed, available)
+                    if units_bought > 0
+                        supplier.realized_sales_this_tick += units_bought
+                        f.inputs_acquired[b2b_type] = get(f.inputs_acquired, b2b_type, 0) + units_bought
+                        dist = min_supplier_distance(state, f, supplier)
+                        f.input_cost_this_tick += units_bought * supplier.goods_price +
+                            state.params.input_travel_cost_per_block * dist * units_bought
+                    end
+                end
+            end
+            remaining = units_needed - units_bought
+            if remaining > 0 && isfinite(outside_eff)
+                f.inputs_acquired[b2b_type] = get(f.inputs_acquired, b2b_type, 0) + remaining
+                f.input_cost_this_tick += remaining * outside_eff
+            end
         end
     end
 end
@@ -130,6 +159,8 @@ function hire_worker!(state::ModelState, w::Worker, f::Firm)
     !f.active && return false
     !isnothing(w.employer_id) && return false
     length(f.worker_ids) >= state.params.max_workers_per_firm && return false
+    current_payroll = sum(values(f.current_worker_wages); init=0.0)
+    f.cash < (current_payroll + f.posted_wage) * state.params.min_hire_cash_ticks && return false
     push!(f.worker_ids, w.id)
     f.current_worker_wages[w.id] = f.posted_wage
     w.employer_id = f.id
@@ -151,10 +182,15 @@ end
 function firm_reviews!(state::ModelState)
     for f in active_firms(state)
         if rand(state.rng) < state.params.price_review_prob
-            sold_out = !isempty(f.realized_sales_history) && f.realized_sales_history[end] >= f.committed_output
+            last_sales = isempty(f.realized_sales_history) ? 0 : f.realized_sales_history[end]
+            sold_out = last_sales >= f.committed_output && f.committed_output > 0
             raise = is_b2b(state, f) ? state.params.input_price_raise_rate : state.params.price_raise_rate
             cut   = is_b2b(state, f) ? state.params.input_price_cut_rate   : state.params.price_cut_rate
-            f.goods_price *= sold_out ? (1 + raise) : (1 - cut)
+            if sold_out
+                f.goods_price *= (1 + raise)
+            elseif last_sales > 0
+                f.goods_price *= (1 - cut)
+            end
             f.goods_price = max(0.25, f.goods_price)
         end
         if rand(state.rng) < state.params.wage_review_prob
@@ -180,8 +216,9 @@ function calculate_profits!(state::ModelState)
         revenue = f.realized_sales_this_tick * f.goods_price
         wages = sum(values(f.current_worker_wages); init=0.0)
         rent = sum(state.lots[lid].commercial_rent * n for (lid, n) in f.commercial_units_by_lot; init=0.0)
-        input_costs = is_b2c(state, f) ? f.input_cost_this_tick : 0.0
+        input_costs = f.input_cost_this_tick
         profit = revenue - wages - rent - input_costs
+        f.cash += profit
         push!(f.realized_sales_history, f.realized_sales_this_tick)
         push!(f.profit_history, profit)
         if profit > 0
@@ -194,8 +231,13 @@ end
 
 function firm_contraction_expansion!(state::ModelState)
     for f in copy(active_firms(state))
-        if rand(state.rng) < state.params.contraction_review_prob
-            recent = last(f.realized_sales_history, min(length(f.realized_sales_history), state.params.modal_sales_lookback))
+        if f.cash < 0
+            liquidate_firm!(state, f)
+            continue
+        end
+        if rand(state.rng) < state.params.contraction_review_prob &&
+                length(f.realized_sales_history) >= state.params.modal_sales_lookback
+            recent = last(f.realized_sales_history, state.params.modal_sales_lookback)
             target = modal_int(collect(recent))
             while production_capacity(state, f, state.params) > target && length(f.worker_ids) > 1
                 highest = f.worker_ids[argmax([f.current_worker_wages[id] for id in f.worker_ids])]
@@ -209,9 +251,19 @@ function firm_contraction_expansion!(state::ModelState)
             profitable = !isempty(f.profit_history) && f.profit_history[end] > 0
             sold_out = f.realized_sales_this_tick >= f.committed_output && f.committed_output > 0
             if profitable && sold_out
-                f.capital_units += 1
-                rand(state.rng) < 0.25 && (f.process_count += 1)
-                commercial_space_search!(state, f)
+                cap_cost = state.params.firm_types[f.firm_type].capital_price
+                if f.cash >= cap_cost
+                    f.cash -= cap_cost
+                    f.capital_units += 1
+                    if rand(state.rng) < 0.25
+                        proc_cost = state.params.firm_types[f.firm_type].process_price
+                        if f.cash >= proc_cost
+                            f.cash -= proc_cost
+                            f.process_count += 1
+                        end
+                    end
+                    commercial_space_search!(state, f)
+                end
             end
         end
         if length(f.worker_ids) == 0 || f.capital_units == 0

@@ -14,9 +14,11 @@ function step!(state::ModelState)
     human_capital_phase!(state)
     social_ties_phase!(state)
     firm_reviews!(state)
-    commit_intermediate_output!(state)
-    input_purchasing_phase!(state)
-    commit_production!(state)
+    commit_intermediate_output!(state)                          # tier 1 B2B commits (no inputs)
+    input_purchasing_phase!(state, 2)                           # tier 2 B2B buys from tier 1
+    commit_b2b_with_inputs!(state)                              # tier 2 B2B commits Leontief-scaled
+    input_purchasing_phase!(state, max_supply_tier(state))      # B2C buys from tier 2
+    commit_production!(state)                                   # B2C commits Leontief-scaled
     consumption_phase!(state)
     calculate_profits!(state)
     refresh_spatial_access!(state)

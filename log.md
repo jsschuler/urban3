@@ -87,29 +87,77 @@ Status: resolved.
 
 ### 2026-04-24: Does the commercial gradient overtake residential at long horizons with I-O linkages?
 
-At 1000 ticks with I-O linkages (seed=77):
-- commercial gradient: -0.47
-- residential gradient: -0.61
-- gap has narrowed relative to no-I-O run (-0.52 vs -0.66)
+**Tentative findings from 5000-tick runs (seeds 77, 42, 123, 456):**
 
-The commercial gradient is building faster than before. The question is whether it
-fully inverts (commercial > residential in magnitude) at 5000 ticks. Four parallel
-5000-tick runs were started (seeds 77, 42, 123, 456) but killed at ~tick 2000 due
-to time constraints. Each run takes ~1.5 hours to complete.
+Rent levels (mean commercial vs residential across seeds):
 
-At tick 2000, seed=77 showed:
-- population=6971, firms=424 (152 B2B, 272 B2C)
-- mean_input_fill_rate=0.813
-- mean_commercial_rent=3.054, mean_residential_rent=4.123
-
-Gradient plots at 1000 ticks are in:
 ```text
-outputs/diagnostics/lots_io_1000.csv
-outputs/diagnostics/rent_gradient_io_1000/
+         tick 1000              tick 2000              tick 3000              tick 4000
+seed=77  com=3.60 res=5.90     com=3.05 res=4.12     com=3.43 res=3.79     com=2.71 res=3.01
+seed=42  com=4.03 res=5.01     com=4.46 res=3.35*    com=6.92 res=4.91     com=4.16 res=3.24*
+seed=123 com=4.67 res=5.25     com=5.48 res=4.44*    com=8.89 res=4.94     com=7.43 res=3.87
+seed=456 com=4.45 res=5.05     com=4.56 res=3.84*    com=5.91 res=3.91     com=5.77 res=3.59
+
+* = commercial rent exceeds residential
 ```
 
-To resume: run the 5000-tick command from the Next Steps section below and run
-`Rscript diagnostics/rent_gradient_diagnostics.R` on the output.
+**Complete 5000-tick results (all four seeds):**
+
+Rent levels:
+```text
+         tick 1000              tick 2000              tick 3000              tick 4000              tick 5000
+seed=77  com=3.60 res=5.90     com=3.05 res=4.12     com=3.43 res=3.79     com=2.71 res=3.01     com=2.07 res=2.20
+seed=42  com=4.03 res=5.01     com=4.46 res=3.35*    com=6.92 res=4.91     com=4.16 res=3.24*    com=3.77 res=2.25*
+seed=123 com=4.67 res=5.25     com=5.48 res=4.44*    com=8.89 res=4.94     com=7.43 res=3.87     com=2.30 res=2.53
+seed=456 com=4.45 res=5.05     com=4.56 res=3.84*    com=5.91 res=3.91     com=5.77 res=3.59     com=4.47 res=2.42*
+
+* = commercial rent exceeds residential
+```
+
+Gradient correlations (rent vs distance from centroid) at tick 5000:
+```text
+seed    com_gradient  res_gradient  ratio (com/res)
+77      -0.457        -0.635        0.72
+42      -0.455        -0.627        0.73
+123     -0.384        -0.621        0.62
+456     -0.497        -0.638        0.78
+mean    -0.448        -0.630        0.71
+```
+
+**Assessment:**
+
+The I-O linkages produce the right directional effects on rent levels (commercial
+exceeds residential in 3 of 4 seeds by tick 5000, and fill rates stabilize around
+0.87-0.90, confirming the Leontief mechanism is active). However, the gradient
+ordering has not inverted in any seed — residential gradient remains steeper across
+all four seeds at 5000 ticks, with commercial at 62-78% of residential magnitude.
+
+Notably, commercial rent levels can be high (seed 456: 4.47 vs 2.42 residential)
+while the spatial concentration of those rents is still flatter than residential.
+This means commercial rents are elevated but more uniformly distributed, while
+residential rents are concentrated near the center. The agglomeration force from
+I-O linkages is adding commercial rent mass without adding spatial concentration.
+
+Key structural problems:
+
+1. **Late-run commercial rent collapse** (seeds 123 and 77): commercial rents spike
+   mid-run (tick 3000) then collapse sharply, suggesting developer supply response
+   overshoots or B2C profitability erodes at scale. Seeds 42 and 456 sustain
+   commercial premium through tick 5000 — worth investigating what differs.
+
+2. **Agglomeration force too diffuse**: B2B firms cluster near consumers (same
+   locational signal as B2C), so the inter-firm agglomeration amplifies the
+   existing consumer-access gradient rather than creating a distinct, steeper
+   commercial clustering mechanism. The one-tier shallow network provides too
+   weak a localization pull to differentiate commercial from residential.
+
+**Next direction**: explore a deeper supplier network (B2B firms also purchasing
+from other B2B firms). Multi-tier networks create compounding spatial pull because
+each tier has an additional reason to locate near its upstream suppliers, generating
+a commercial cluster that is qualitatively more concentrated than what consumer
+proximity alone produces.
+
+Status: in progress — three-tier network implemented 2026-04-25.
 
 ### 2026-04-24: Is the B2B/B2C firm count ratio stable and appropriate?
 
@@ -127,7 +175,7 @@ collapse B2C output and is a failure mode to watch for.
 
 ## Next Steps
 
-### 2026-04-24: Pending — 5000-tick I-O gradient runs (4 seeds)
+### 2026-04-25: Completed — 5000-tick I-O gradient runs (4 seeds)
 
 Run the following to complete the long-run gradient comparison. Takes ~1.5 hours per seed;
 run all four in parallel on a fast machine.
@@ -274,6 +322,323 @@ The gap between commercial and residential gradients has narrowed. The ordering
 the commercial gradient faster. Whether it inverts at 5000 ticks is an open question
 (see Open Questions above).
 
+---
+
+### 2026-04-25: Cash flow modeling — implementation and cold-start calibration
+
+Added true cash-flow tracking to eliminate zombie firms and replaced an
+over-aggressive contraction rule and price-revision rule that caused cold-start
+collapse under the three-tier supply chain.
+
+---
+
+#### Motivation
+
+The prior model had no cash drain mechanism. Firms recorded `profit_history` but
+nothing was ever subtracted from any balance. Contraction required firms to reach
+(1 worker, 1 capital) — a floor reachable only through the probabilistic
+contraction review — and liquidation triggered only when a firm fell to zero
+workers or zero capital, which the while-loop floor prevented. Zombie firms
+persisted indefinitely regardless of losses.
+
+---
+
+#### Cash flow implementation
+
+Added `cash::Float64` to `Firm` (in `Types.jl`). Initialized from `initial_cash`
+kwarg in `found_firm!` (default = `startup_capital`; initial firms use a new
+`initial_firm_cash` parameter).
+
+In `calculate_profits!` (Firms.jl):
+```julia
+profit = revenue - wages - rent - input_costs
+f.cash += profit
+```
+
+Capital and process purchases are deducted from cash immediately:
+```julia
+if f.cash >= cap_cost
+    f.cash -= cap_cost
+    f.capital_units += 1
+    ...
+end
+```
+
+Insolvency check added at the top of `firm_contraction_expansion!`:
+```julia
+if f.cash < 0
+    liquidate_firm!(state, f)
+    continue
+end
+```
+
+New parameters added to `ModelParams`:
+- `initial_firm_cash::Float64 = 15_000.0`
+- `initial_hire_per_firm::Int = 3`
+- `startup_production_target::Int = 2` (unused after recalibration; see below)
+- `min_hire_cash_ticks::Int = 200`
+
+---
+
+#### Problem 1: cold-start cascade (immediate collapse)
+
+With `initial_firm_cash=2000`, all initial firms went bankrupt within 33 ticks.
+With 18 workers/firm (from `initial_hire!` using `max_workers_per_firm`), wage
+bills were ~180/tick while early revenue was near zero. Root cause: too many
+workers hired at startup before any market exists.
+
+**Fix:** Added `initial_hire_per_firm::Int = 3` parameter and wired it into
+`initial_hire!` in `State.jl`. Initial firms now start with at most 3 workers.
+
+---
+
+#### Problem 2: firms over-hiring during cold start
+
+Even with 3 initial workers, firms recruited aggressively from the pool of 160+
+unemployed workers via the normal job search (which uses `max_workers_per_firm=18`
+as the cap, not `initial_hire_per_firm`). By tick 10, some firms had 9 workers,
+multiplying wage bills before any revenue existed.
+
+**Fix:** Added a cash-based hiring gate to `hire_worker!` in `Firms.jl`:
+```julia
+current_payroll = sum(values(f.current_worker_wages); init=0.0)
+f.cash < (current_payroll + f.posted_wage) * state.params.min_hire_cash_ticks && return false
+```
+With `min_hire_cash_ticks=200`, a firm with 3 workers (payroll 30) needs
+cash ≥ (30+10)×200=8000 to hire a 4th worker. Firms grow slowly and stop
+hiring when cash becomes insufficient to cover expanded payroll.
+
+---
+
+#### Problem 3: premature contraction kills employment
+
+With `modal_sales_lookback=12`, contraction fired as soon as any sales history
+existed — after tick 1, a firm with 1 data point of zero sales would target
+`modal=0` and fire workers down to 1. This collapsed employment from 48 to
+~13 within 12 ticks, destroying consumer demand before B2C firms could
+establish any market.
+
+**Fix:** Contraction now requires a full lookback window before firing:
+```julia
+if rand(state.rng) < state.params.contraction_review_prob &&
+        length(f.realized_sales_history) >= state.params.modal_sales_lookback
+```
+Firms get 12 ticks of grace before contraction can reduce their workforce.
+
+---
+
+#### Problem 4: T1/T2 price deflation death spiral
+
+T1 firms committed ~6 units but sold only 2-3 (T2 demand is Leontief-fixed
+per unit of T2 output and limited by T2 capacity). Consistently not sold out →
+price cut every review → price falls below break-even (≈3.75) → cash drains →
+T1 exits → T2 loses inputs → T2 exits → B2C has no T2 inputs → collapse.
+
+The original price revision logic cut prices whenever `realized_sales < committed`.
+In a Leontief B2B market, input demand is quantity-fixed: cutting price does not
+attract more buyers if demand is structurally limited. Price cuts reduce revenue
+without creating new customers.
+
+**Fix:** Changed price revision in `firm_reviews!` to cut price only when
+`last_sales > 0` (partial sell-through: buyers exist but you're not capturing all
+of them). No cut when `last_sales == 0` (no buyers exist regardless of price):
+```julia
+if sold_out
+    f.goods_price *= (1 + raise)
+elseif last_sales > 0
+    f.goods_price *= (1 - cut)
+# else: zero sales — leave price unchanged; cutting won't attract Leontief buyers
+end
+```
+
+---
+
+#### Problem 5: IO coefficients and tier prices not calibrated for three-tier viability
+
+Original IO coefficients (min=0.5, max=2.0, density=0.7) were designed for a
+zombie economy. Under cash flow, firms with high input costs and low prices were
+structurally unprofitable at any scale.
+
+Working backward from minimum viable parameters with 1 worker per firm (cap≈4):
+- Break-even: `price = (wages + rent) / cap = (10+5)/4 = 3.75` per tier
+- T2 viable: `P_t2 > P_t1 × coeff × density × 2_types + 3.75`
+  → with coeff=0.625, density=0.5: `P_t2 > 5×0.625×1.0 + 3.75 = 6.875`
+- B2C viable: `P_t3 > P_t2 × coeff × density × 2_types + 3.75`
+  → `P_t3 > 8.5×0.625×1.0 + 3.75 = 9.06`
+
+**Fix:**
+- IO density: 0.7 → 0.5 (fewer active links per firm, reducing total input burden)
+- IO coefficients: min=0.5, max=0.75 (mean≈0.625; above break-even for T1 viability
+  with ~5 T2 buyers per T1 firm, below the spiral threshold)
+- Added `initial_goods_price_min/max` to `FirmTypeParams` for tier-specific pricing:
+  - T1: 4–6 (above break-even 3.75)
+  - T2: 7–10 (above break-even 6.9)
+  - B2C: 10–14 (above break-even 9.1)
+- Updated `found_firm!` to use `params.firm_types[ftype].initial_goods_price_min/max`
+  instead of hardcoded `4.0 + rand(rng) * 2.0`
+
+---
+
+#### Files changed
+
+- `Types.jl`: added `cash::Float64` to `Firm`
+- `Parameters.jl`: added `initial_firm_cash`, `initial_hire_per_firm`,
+  `startup_production_target`, `min_hire_cash_ticks` to `ModelParams`; added
+  `initial_goods_price_min/max` to `FirmTypeParams`; updated default `firm_types`
+  with tier-specific price ranges; updated `io_matrix_density`, coefficients
+- `State.jl`: `initial_hire!` now caps at `initial_hire_per_firm`
+- `Firms.jl`: `calculate_profits!` adds/subtracts from `f.cash`; capital/process
+  purchases deducted from `f.cash`; insolvency check at top of
+  `firm_contraction_expansion!`; `hire_worker!` has cash-based gate;
+  `firm_reviews!` uses no-cut-on-zero-sales price logic; contraction requires
+  full lookback window
+- `Entrepreneurship.jl`: `found_firm!` uses tier-specific price range; accepts
+  `initial_cash` kwarg
+
+Status: implemented; awaiting 500-tick stability test.
+
+---
+
+### 2026-04-25: Parameter recalibration — cash flow exposed structural unviability
+
+#### Finding
+
+Adding cash flow tracking made a previously invisible structural problem visible:
+the three-tier economy was mathematically unviable at the parameters set before
+cash flow was introduced. Without cash flow, firms were immortal zombies —
+chronically loss-making firms persisted indefinitely, so the model appeared
+"stable" and could be tuned to produce interesting-looking spatial patterns.
+With cash flow, insolvent firms exit, and the economy collapses by tick 350–450
+regardless of other fixes applied.
+
+The key insight: **cash flow acts as a feasibility test**. Any parameter
+combination that allows firms to survive indefinitely regardless of losses is
+concealing whether the underlying production economics are coherent. The collapse
+under cash flow is not a bug — it is the model correctly reporting that the prior
+parameters described an economy that cannot sustain itself.
+
+#### Two independent structural failures
+
+**1. T1 chronic under-utilization (31% demand coverage)**
+
+With equal firm counts per tier (~5 firms/tier), IO density=0.5, mean coeff=0.625:
+
+```
+T1 demand per tick = n_T2 × density × coeff × (T2 output / T1 cap)
+                   ≈ 5 × 0.5 × 0.625 × 1.0 = 1.56 units total across all T1 firms
+T1 supply per firm = cap ≈ 4–6 units
+T1 utilization     ≈ 31%
+```
+
+At 31% utilization, T1 revenue ≈ 6.25 < cost ≈ 15 (wages + rent with cap=4).
+T1 firms slowly drain cash and exit. As T1 exits, T2 loses inputs, T2 exits,
+B2C loses inputs, collapse cascades. The no-cut-on-zero-sales fix slows but
+does not prevent this because T1 does have *some* sales (partial sell-through)
+and correctly cuts on partial sell-through — price still drifts below break-even.
+
+**2. Three-tier affordability constraint violated**
+
+For a 3-tier chain to sustain itself, the B2C break-even price must be within
+worker budget. With wage=10, housing≈1.85, commute≈0.65, workers can spend
+≈8.5 on goods. The viability constraint is:
+
+```
+N × (wages + rent) / cap < worker_budget
+3 × (10 + 5) / 4 = 11.25 > 8.5   ← violated
+```
+
+Break-even B2C price ≈ T2_price × density × coeff + cost/cap
+≈ 8.75 × 0.625 + 3.75 ≈ 9.2 — already above the 8.5 worker budget.
+Initial B2C price range was 10–14: workers literally could not buy any goods
+from tick 1. B2C revenue = 0, immediate cash drain, exit within 100 ticks.
+
+Both failures were **always present** in the model but invisible under zombie-firm
+dynamics. Cash flow revealed them simultaneously.
+
+#### Fix: raise productivity and reset tier-specific prices
+
+Viability requires `N × (wages+rent)/cap < worker_budget`. With N=3 and
+worker_budget=8.5: `cap ≥ 3 × 15 / 8.5 = 5.29`. Setting cap=5.5 satisfies
+this: `3 × 15 / 5.5 = 8.18 < 8.5 ✓`.
+
+New `productivity` = 5.5 for all six firm types (was 4.0/3.6/4.8/3.4).
+
+Tier-specific initial prices derived from break-even at cap=5.5:
+- Break-even per tier: `(10 + 5) / 5.5 = 2.73`
+- T1 break-even: 2.73 → initial range **3–5**
+- T2 break-even: T1_price × density × coeff + 2.73 ≈ 4 × 0.5 × 0.625 + 2.73 = 4.0
+  → initial range **5–7** (safe margin above break-even)
+- B2C break-even: T2_price × density × coeff + 2.73 ≈ 6 × 0.5 × 0.625 + 2.73 = 4.6
+  → initial range **5–8** (well under worker budget of 8.5)
+
+#### Files changed
+
+- `Parameters.jl`: `productivity` for all 6 firm types → 5.5; T1 price range
+  3–5, T2 price range 5–7, B2C price range 5–8
+
+Status: implemented; running 600-tick stability test.
+
+---
+
+### 2026-04-25: Extended to three-tier supply network
+
+Extended the one-tier I-O network to three tiers to create a deeper agglomeration
+pull toward the commercial core.
+
+**Design:**
+
+- `supply_tier::Int` replaces `firm_role::Symbol` in `FirmTypeParams`
+  - Tier 1 (upstream B2B): uses only labor/capital/space; sells to Tier 2 only
+  - Tier 2 (midstream B2B): buys from Tier 1, sells to B2C; Leontief-scaled
+  - Tier 3 (final B2C): buys from Tier 2, sells to consumers; Leontief-scaled
+- `is_b2b`/`is_b2c` are derived from tier position relative to `max_supply_tier`
+- `generate_io_matrix` enforces tier ordering: links only from tier T to tier T-1
+- Default firm_type_count raised from 4 to 6 (2 types per tier)
+- Scheduler now runs two intermediate phases before B2C production
+
+**Scheduler change:**
+
+```
+commit_intermediate_output!         # Tier 1 commits (no inputs)
+input_purchasing_phase!(state, 2)   # Tier 2 buys from Tier 1
+commit_b2b_with_inputs!            # Tier 2 commits Leontief-scaled
+input_purchasing_phase!(state, max_supply_tier(state))  # B2C buys from Tier 2
+commit_production!                  # B2C commits Leontief-scaled
+```
+
+**Files changed:**
+
+- `Parameters.jl`: replaced `firm_role` with `supply_tier` in `FirmTypeParams`;
+  updated default firm types to 6 (2 per tier); `firm_type_count` default = 6
+- `State.jl`: `generate_io_matrix` uses tier ordering instead of role
+- `Firms.jl`: added `firm_supply_tier`, updated `is_b2b`/`is_b2c`, updated
+  `commit_intermediate_output!` to skip firms with inputs, added
+  `commit_b2b_with_inputs!`, changed `input_purchasing_phase!` to accept
+  `buyer_tier::Int`, updated `calculate_profits!` to deduct input costs for all
+  tiers
+- `Scheduler.jl`: two-phase intermediate production
+- `Metrics.jl`: fill rates now collected for all firms with input requirements
+
+**Results (seed=123, 40×40, 3000 workers, 2000 ticks):**
+
+```text
+tick=500:  b2b=165 b2c=90  fill=0.656 com_rent=3.84  res_rent=6.59
+tick=1000: b2b=193 b2c=114 fill=0.727 com_rent=15.39 res_rent=5.17
+tick=2000: b2b=245 b2c=172 fill=0.752 com_rent=17.76 res_rent=4.78
+```
+
+Gradient correlations (vs centroid) at tick 2000:
+```text
+commercial  = -0.577
+residential = -0.651
+ratio (com/res) = 0.89
+```
+
+This is a major improvement over the two-tier system (which reached only 0.62-0.78 ratio at
+5000 ticks). The three-tier system nearly closes the gap in 2000 ticks. Commercial rent levels
+are now 3.7× residential (vs 1.2× in two-tier at the same horizon), and the spatial gradient
+is close to parity. Whether the gradient ordering inverts at 5000 ticks is the next question.
+
 Output files:
 ```text
 outputs/diagnostics/lots_io_250.csv
@@ -381,6 +746,78 @@ Mean-normalized, no premium (this change):        1000 ticks: -0.52
 
 The commercial gradient is now fully endogenous and durable. The residential
 gradient is stable throughout (-0.63 to -0.66).
+
+---
+
+### 2026-04-25: Outside supply as cold-start bridge for upstream tiers
+
+#### Problem
+
+With cash flow tracking active, the three-tier economy collapses by tick 200
+regardless of productivity calibration. The root cause is not prices — it is
+**utilization**. With six firm types distributed uniformly, initialization
+produces roughly equal tier counts (~5 T1, ~7 T2, ~4 B2C from 16 initial
+firms). T2 operates at ~18% utilization (too many T2 firms for the few B2C
+buyers), buying full-capacity T1 inputs every tick but selling almost none of
+its committed output. Cash drain exhausts `initial_firm_cash` in ~230 ticks.
+B2C loses T2 supply and exits shortly after.
+
+The utilization imbalance cannot be solved by parameter calibration alone:
+with random equal-probability type assignment, the tier distribution is always
+roughly uniform, but a viable supply chain requires a pyramid (many B2C, fewer
+T2, very few T1). Even a correctly shaped pyramid creates a different failure:
+severe upstream scarcity drives T1/T2 prices up, the B2C cost cascade exceeds
+the worker goods budget, and B2C exits anyway.
+
+#### Root cause discussion
+
+The cash-flow model is revealing that the cold start is a **bootstrapping
+problem**: T2 needs B2C demand to be viable, but B2C needs T2 supply to
+produce. Neither can exist first. Before cash flow, the infinite initial
+subsidy (zombie firms) let both sides develop in parallel. Removing that
+subsidy collapses both simultaneously.
+
+#### Solution: outside supply as a fallback
+
+Downstream firms (T2, B2C) can purchase required inputs from a supplier
+**outside the model** at a known price, as a fallback when local upstream
+suppliers are unavailable or too expensive. This models the period before
+local backward linkages have formed — firms import intermediate goods, then
+shift to local sourcing as upstream firms enter and become competitive.
+
+**Design:**
+
+- `outside_input_prices::Vector{Float64}` — one base price per supplier tier
+  (indexed by supplier tier: `[price_for_T1_goods, price_for_T2_goods, ...]`).
+  Outside supply is available for any tier that has an entry in this vector.
+- The outside supplier participates in the same cost comparison as local
+  firms: `effective_cost = outside_price + input_travel_cost_per_block × outside_distance`.
+  `outside_distance` is a model parameter representing the virtual distance
+  of the outside supplier from the grid — a large fixed value (e.g., 20 blocks)
+  that encodes the friction of dealing with non-local supply.
+- Buyer firms always prefer local suppliers when local effective cost is lower.
+  Outside supply fills only what local suppliers cannot cover.
+- As local upstream firms enter and locate near their buyers, their
+  `price + actual_travel_cost` beats `outside_price + outside_distance_cost`,
+  and they win the business. This creates the import-substitution dynamic and
+  gives upstream firms a spatial incentive to locate near their buyers.
+
+**Calibration constraints:**
+
+For each supplier tier T, the outside price must satisfy:
+- `outside_price[T] ≥ break_even_price[T]` — so local T-tier firms can enter
+  at a profitable price and still undercut outside supply (when close enough)
+- `outside_price[T]` low enough that downstream tiers remain viable
+  (cost cascade does not push B2C break-even above worker goods budget)
+
+With 1 worker per firm (most efficient size given Cobb-Douglas with
+labor_elasticity < 1), break-even prices are:
+- T1: ~2.5, T2: ~4.8, B2C: ~5.5 (within worker goods budget ~6.9)
+
+Candidate outside prices: T1 goods ≈ 3.5, T2 goods ≈ 5.5. Local T1 firms
+within 5 blocks of a T2 buyer can undercut outside at these prices.
+
+**Status:** designed; not yet implemented.
 
 Output files:
 

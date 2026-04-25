@@ -945,3 +945,50 @@ Key changes across modules:
 - `Scheduler.jl`: add B2B commitment phase and B2C input purchasing phase in correct tick positions
 - `Metrics.jl`: add input market diagnostics — input fill rate by type, mean input price by type, intermediate sales by type
 - `Search.jl`: reuse existing search architecture for input search; no structural changes expected
+
+---
+
+# 29. Three-tier supply network
+
+## 29.1 Motivation
+
+The one-tier shallow I-O network (Section 28) steepens the commercial rent gradient but does not invert the residential/commercial ordering. The root problem is that B2B firms cluster near consumers (the same locational signal as B2C), so inter-firm agglomeration amplifies the consumer-access gradient rather than creating a qualitatively distinct commercial clustering force.
+
+A three-tier network adds a second layer: Tier 1 upstream B2B firms sell to Tier 2 midstream B2B firms, which sell to B2C firms, which sell to consumers. This creates a cascading agglomeration pull toward the commercial core — B2C attracts Tier 2 (as customers), Tier 2 attracts Tier 1 (as customers) — with each layer compounding the spatial concentration.
+
+## 29.2 Tier structure
+
+Each firm type has a `supply_tier::Int` (replacing `firm_role::Symbol`):
+
+- **Tier 1** (upstream B2B): uses only labor, capital, space; no purchased inputs; sells exclusively to Tier 2 firms
+- **Tier 2** (midstream B2B): buys inputs from Tier 1 suppliers; sells exclusively to B2C firms; output Leontief-scaled by Tier 1 fill rate
+- **Tier 3** (final B2C): buys inputs from Tier 2 suppliers; sells exclusively to consumers; output Leontief-scaled by Tier 2 fill rate
+
+`is_b2b(state, f)` is true for tiers 1 and 2 (sell to firms only); `is_b2c(state, f)` is true for tier 3 (sells to consumers only). These helpers are derived from tier position relative to `max_supply_tier`.
+
+## 29.3 I-O matrix structure
+
+The `generate_io_matrix` function enforces strict tier ordering: only linkages from tier T buyers to tier T-1 suppliers are generated. No cross-tier, same-tier, or circular links are produced. The density and coefficient parameters from Section 28 apply within each buyer-supplier tier pair.
+
+With 2 types per tier (6 types total), the 6×6 matrix has two non-zero blocks: rows 3-4 against columns 1-2 (Tier 2 buying Tier 1), and rows 5-6 against columns 3-4 (Tier 3 buying Tier 2).
+
+## 29.4 Scheduler phases
+
+The two-phase intermediate production replaces the single phase from Section 28:
+
+```
+commit_intermediate_output!          # Tier 1 commits (no input check needed)
+input_purchasing_phase!(state, 2)    # Tier 2 buys from Tier 1
+commit_b2b_with_inputs!             # Tier 2 commits Leontief-scaled
+input_purchasing_phase!(state, max_supply_tier(state))  # B2C buys from Tier 2
+commit_production!                   # B2C commits Leontief-scaled
+consumption_phase!                   # consumers buy from B2C
+```
+
+## 29.5 Profit accounting
+
+Input costs are deducted from profit for all firms that purchase inputs (Tier 2 and B2C). The `input_cost_this_tick` field on `Firm` is set to zero for Tier 1 firms throughout the run.
+
+## 29.6 Parameters
+
+Default configuration uses 6 firm types (2 per tier) with `firm_type_count = 6`. All I-O parameters from Section 28.11 carry over without change.

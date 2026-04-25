@@ -36,6 +36,7 @@ function metrics_snapshot(state::ModelState)
         "firm_size_distribution" => [length(f.worker_ids) for f in active],
         "goods_sales_by_type" => sales_by_type(state),
         "input_market_summary" => input_market_summary(state),
+        "tier_diagnostics" => tier_diagnostics(state),
         "decision_summary" => decision_summary(state),
         "market_failure_summary" => market_failure_summary(state),
         "search_coverage_summary" => search_coverage_summary(state),
@@ -67,9 +68,9 @@ function input_market_summary(state::ModelState)
     b2b = [f for f in active_firms(state) if is_b2b(state, f)]
     b2c = [f for f in active_firms(state) if is_b2c(state, f)]
     fill_rates = Float64[]
-    for f in b2c
-        scale = leontief_input_scale(state, f)
-        push!(fill_rates, scale)
+    for f in active_firms(state)
+        isempty(required_input_types(state, f)) && continue
+        push!(fill_rates, leontief_input_scale(state, f))
     end
     input_prices = Dict(string(f.firm_type) => f.goods_price for f in b2b)
     Dict(
@@ -81,4 +82,35 @@ function input_market_summary(state::ModelState)
         "b2b_sold_out_share" => isempty(b2b) ? 0.0 :
             count(f -> f.realized_sales_this_tick >= f.committed_output && f.committed_output > 0, b2b) / length(b2b),
     )
+end
+
+function tier_diagnostics(state::ModelState)
+    max_tier = max_supply_tier(state)
+    counts   = Dict(t => 0       for t in 1:max_tier)
+    fills    = Dict(t => Float64[] for t in 1:max_tier)
+    sold_out = Dict(t => Float64[] for t in 1:max_tier)
+    prices   = Dict(t => Float64[] for t in 1:max_tier)
+    for f in active_firms(state)
+        t = firm_supply_tier(state, f)
+        counts[t] += 1
+        push!(prices[t], f.goods_price)
+        if f.committed_output > 0
+            push!(sold_out[t], f.realized_sales_this_tick >= f.committed_output ? 1.0 : 0.0)
+        end
+        isempty(required_input_types(state, f)) && continue
+        push!(fills[t], leontief_input_scale(state, f))
+    end
+    cash_neg = Dict(t => 0 for t in 1:max_tier)
+    for f in active_firms(state)
+        f.cash < 0 && (cash_neg[firm_supply_tier(state, f)] += 1)
+    end
+    out = Dict{String,Any}()
+    for t in 1:max_tier
+        out["firms_t$t"]      = counts[t]
+        out["fill_t$t"]       = isempty(fills[t])    ? 1.0 : mean(fills[t])
+        out["sold_out_t$t"]   = isempty(sold_out[t]) ? 0.0 : mean(sold_out[t])
+        out["mean_price_t$t"] = isempty(prices[t])   ? 0.0 : mean(prices[t])
+        out["insolvent_t$t"]  = cash_neg[t]
+    end
+    return out
 end
