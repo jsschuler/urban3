@@ -31,8 +31,8 @@ Base.@kwdef mutable struct ModelParams
     initial_commercial_units_per_lot::Int = 1
     initial_residential_rent_min::Float64 = 1.8
     initial_residential_rent_max::Float64 = 3.0
-    initial_commercial_rent_min::Float64 = 4.5
-    initial_commercial_rent_max::Float64 = 7.5
+    initial_commercial_rent_min::Float64 = 3.0
+    initial_commercial_rent_max::Float64 = 5.5
     firm_type_count::Int = 6
     seed::Int = 42
 
@@ -87,12 +87,12 @@ Base.@kwdef mutable struct ModelParams
     network_spillover_radius::Int = 8
 
     firm_types::Vector{FirmTypeParams} = [
-        FirmTypeParams(supply_tier=1, productivity=5.5, initial_goods_price_min=3.0, initial_goods_price_max=5.0),
-        FirmTypeParams(supply_tier=1, productivity=5.5, initial_goods_price_min=3.0, initial_goods_price_max=5.0),
-        FirmTypeParams(supply_tier=2, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=7.0),
-        FirmTypeParams(supply_tier=2, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=7.0),
-        FirmTypeParams(supply_tier=3, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=8.0),
-        FirmTypeParams(supply_tier=3, productivity=5.5, initial_goods_price_min=5.0, initial_goods_price_max=8.0),
+        FirmTypeParams(supply_tier=1, productivity=6.5, initial_goods_price_min=2.5, initial_goods_price_max=4.0),
+        FirmTypeParams(supply_tier=1, productivity=6.5, initial_goods_price_min=2.5, initial_goods_price_max=4.0),
+        FirmTypeParams(supply_tier=2, productivity=6.5, initial_goods_price_min=3.5, initial_goods_price_max=5.5),
+        FirmTypeParams(supply_tier=2, productivity=6.5, initial_goods_price_min=3.5, initial_goods_price_max=5.5),
+        FirmTypeParams(supply_tier=3, productivity=6.5, initial_goods_price_min=4.0, initial_goods_price_max=6.5),
+        FirmTypeParams(supply_tier=3, productivity=6.5, initial_goods_price_min=4.0, initial_goods_price_max=6.5),
     ]
     price_raise_rate::Float64 = 0.04
     price_cut_rate::Float64 = 0.04
@@ -130,14 +130,15 @@ Base.@kwdef mutable struct ModelParams
 
     io_matrix_seed::Int = 0
     io_matrix_density::Float64 = 0.5
-    io_matrix_coefficient_min::Float64 = 0.50
-    io_matrix_coefficient_max::Float64 = 0.75
+    io_matrix_coefficient_min::Float64 = 0.20
+    io_matrix_coefficient_max::Float64 = 0.40
     input_price_raise_rate::Float64 = 0.04
     input_price_cut_rate::Float64 = 0.04
     input_travel_cost_per_block::Float64 = 0.20
     input_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=8, global_samples=16)
-    outside_input_prices::Vector{Float64} = [3.5, 5.5]
+    outside_input_prices::Vector{Float64} = [3.5, 5.0]
     outside_input_distance::Float64 = 5.0
+    outside_wage::Float64 = 8.0
 
     solo_found_prob::Float64 = 0.010
     coalition_found_prob::Float64 = 0.006
@@ -148,7 +149,7 @@ Base.@kwdef mutable struct ModelParams
     initial_firm_cash::Float64 = 15_000.0
     initial_hire_per_firm::Int = 3
     startup_production_target::Int = 2
-    min_hire_cash_ticks::Int = 200
+    min_hire_cash_ticks::Int = 300
 
     outside_entry_rate::Float64 = 3.0
     blender_update_every::Int = 5

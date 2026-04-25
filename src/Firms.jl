@@ -107,17 +107,19 @@ function input_purchasing_phase!(state::ModelState, buyer_tier::Int)
             units_bought = 0
             candidates = sample_input_suppliers(state, f, b2b_type)
             if !isempty(candidates)
-                supplier = candidates[argmin([effective_input_cost(state, f, sup) for sup in candidates])]
-                if effective_input_cost(state, f, supplier) <= outside_eff
+                sort!(candidates; by = sup -> effective_input_cost(state, f, sup))
+                for supplier in candidates
+                    units_bought >= units_needed && break
+                    effective_input_cost(state, f, supplier) > outside_eff && break
                     available = supplier.committed_output - supplier.realized_sales_this_tick
-                    units_bought = min(units_needed, available)
-                    if units_bought > 0
-                        supplier.realized_sales_this_tick += units_bought
-                        f.inputs_acquired[b2b_type] = get(f.inputs_acquired, b2b_type, 0) + units_bought
-                        dist = min_supplier_distance(state, f, supplier)
-                        f.input_cost_this_tick += units_bought * supplier.goods_price +
-                            state.params.input_travel_cost_per_block * dist * units_bought
-                    end
+                    available == 0 && continue
+                    to_buy = min(units_needed - units_bought, available)
+                    supplier.realized_sales_this_tick += to_buy
+                    f.inputs_acquired[b2b_type] = get(f.inputs_acquired, b2b_type, 0) + to_buy
+                    dist = min_supplier_distance(state, f, supplier)
+                    f.input_cost_this_tick += to_buy * supplier.goods_price +
+                        state.params.input_travel_cost_per_block * dist * to_buy
+                    units_bought += to_buy
                 end
             end
             remaining = units_needed - units_bought
@@ -186,9 +188,14 @@ function firm_reviews!(state::ModelState)
             sold_out = last_sales >= f.committed_output && f.committed_output > 0
             raise = is_b2b(state, f) ? state.params.input_price_raise_rate : state.params.price_raise_rate
             cut   = is_b2b(state, f) ? state.params.input_price_cut_rate   : state.params.price_cut_rate
+            do_cut = if is_b2b(state, f)
+                last_sales == 0 && f.committed_output > 0
+            else
+                last_sales > 0
+            end
             if sold_out
                 f.goods_price *= (1 + raise)
-            elseif last_sales > 0
+            elseif do_cut
                 f.goods_price *= (1 - cut)
             end
             f.goods_price = max(0.25, f.goods_price)

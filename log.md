@@ -817,7 +817,17 @@ labor_elasticity < 1), break-even prices are:
 Candidate outside prices: T1 goods ≈ 3.5, T2 goods ≈ 5.5. Local T1 firms
 within 5 blocks of a T2 buyer can undercut outside at these prices.
 
-**Status:** designed; not yet implemented.
+**Implementation note — local supplier sweep:**
+
+The initial implementation took only the single cheapest local supplier and
+sent any unfilled remainder to outside, even when other local candidates were
+also cheaper than outside. The correct logic is to sweep all local candidates
+in ascending cost order, buying from each as long as its effective cost is
+below the outside effective cost, stopping only when demand is satisfied or
+the next local option exceeds outside cost. Outside supply fills only what
+genuinely cannot be sourced locally at a competitive price.
+
+**Status:** implemented.
 
 Output files:
 
@@ -828,6 +838,245 @@ outputs/diagnostics/lots_endogenous_bid_1000.csv
 outputs/diagnostics/rent_gradient_endogenous_bid_1000/
 outputs/diagnostics/market_log_endogenous_bid_1000.csv
 ```
+
+---
+
+### 2026-04-25: Outside labor market as consumption-side cold-start bridge
+
+#### Problem
+
+Even with outside input supply stabilizing upstream firms, the economy collapses
+on the consumption side. Contraction fires after the `modal_sales_lookback` grace
+period (tick 12), firms shed workers, and unemployed workers earn zero. With no
+income, they stop buying B2C goods, B2C revenue collapses, and B2C exits — taking
+T2 demand down with it. The supply-side bridge alone cannot save the economy if
+the demand side is gone.
+
+#### Root cause
+
+`worker_income` returns 0.0 for unemployed workers. Workers without income skip
+the consumption loop entirely. There is no outside employment option: once a firm
+sheds a worker, that worker's purchasing power drops to zero immediately.
+
+#### Solution: outside labor market
+
+Workers can work "outside the model" — supplying labor to employers that are not
+explicitly represented on the grid. This provides a consumption floor that prevents
+demand collapse during the bootstrap period, symmetric to the outside input supply
+mechanism on the production side.
+
+**Design:**
+
+- Unemployed workers earn a flat `outside_wage` each tick.
+- The outside employer is conceptually at the city edge. To equalize the outside
+  option with the worst inside option (and give inside firms a location advantage),
+  the outside commute cost is set to `job_access_radius × commute_cost_per_block`.
+  With defaults (radius=8, cost=0.12), this is 0.96/tick.
+- Workers always prefer an in-model job: the job search already places them in the
+  best available in-model job, and they only fall back to outside when none is
+  available.
+- Unemployed workers can now also find and hold housing, using `outside_wage` as
+  their income and the maximum commute deduction as their commute cost. This
+  allows them to participate in the housing market and preserves their shopping
+  anchor location.
+
+**Parameters added:**
+
+- `outside_wage::Float64 = 5.0` — flat wage paid to unemployed workers per tick
+
+**Files changed:**
+
+- `Parameters.jl`: added `outside_wage`
+- `Workers.jl`: `worker_income` takes `params` argument, returns `params.outside_wage`
+  when unemployed; `housing_affordable` uses `outside_wage` and max commute cost
+  for unemployed workers; `housing_search!(::Unhoused, ::Unemployed, ...)` enabled
+  to call `move_to_best_home!` instead of returning false; `consumption_phase!`
+  updated to pass `state.params`
+
+**Status:** implemented.
+
+---
+
+### 2026-04-25: Cold-start parameter calibration via MC viability search
+
+#### Problem
+
+Test runs after implementing outside supply and outside labor market still showed
+cold-start collapse. Analytical cash-flow checks identified two compounding issues:
+
+1. `outside_wage = 5.0` gives unemployed workers a shopping budget of ~4.25/tick
+   (after savings). B2C goods break even around 6.5–8.0/unit. Workers cannot
+   afford B2C goods at all, so demand collapses despite the outside wage floor.
+
+2. `io_matrix_coefficient_min = 0.50` means every unit of B2C output requires at
+   least 0.50 units of T2 input. With T2 outside effective cost at 8.0/unit,
+   input costs alone exceed B2C revenue at any affordable price.
+
+#### Diagnosis: MC viability search
+
+A Monte Carlo search over 15 parameters simultaneously (200,000 samples × 30
+inner environment draws) evaluated three analytical conditions:
+- C1: T1 break-even price < outside T1 effective cost (local T1 beats outside)
+- C2: T2 break-even price < outside T2 effective cost (local T2 beats outside)
+- C3: unemployed worker shopping budget ≥ T3 break-even + travel cost
+
+Results:
+- C1 passes 97.8% of the time across the full parameter space — never binding
+- C2 passes 86.3% of the time — rarely binding
+- C3 passes only 38.3% — the single dominant constraint everywhere
+
+Only two parameters were flagged as strongly separating viable from non-viable
+samples (viable distribution shifted more than 15% of range from the full midpoint):
+
+- `outside_wage`: current 5.0 is below the 10th percentile of viable samples
+  (viable q10/q50/q90 = 9.0/12.6/14.6). However, many of these samples had
+  outside_wage > base_wage, which is economically incoherent — workers outside
+  the model would earn more than those inside. The correct parameterization is a
+  **reservation wage ratio** (outside_wage = ratio × base_wage). With the ratio
+  constrained to ≤ 0.85 and base_wage = 10.0, outside_wage should be ≤ 8.5.
+
+- `io_matrix_coefficient_min`: current 0.50 is above the 90th percentile of viable
+  samples (viable q10/q50/q90 = 0.13/0.24/0.46). B2C input requirements need to
+  be much lighter for the supply chain to be cost-viable at consumer prices.
+
+#### Parameter changes
+
+- `io_matrix_coefficient_min`: 0.50 → 0.20
+- `io_matrix_coefficient_max`: 0.75 → 0.40
+- `outside_wage`: 5.0 → 8.0  (= 0.80 × base_wage; reservation wage 80%)
+- `outside_input_prices[2]`: 7.0 → 5.0  (lowers T2 outside cost, reducing B2C
+  input burden and widening the feasible window for T2 vs B2C pricing)
+
+**Why these values:** with coeff ∈ [0.20, 0.40], cap(L=1) = 6, and
+outside_eff_t2 = 6.0 (op2=5.0 + input_tc×distance=1.0), B2C break-even is
+≈ (10 + 6 + 2×6) / 6 = 4.67/unit at mean coeff 0.30. Unemployed worker budget
+= 8.0 × 0.85 = 6.8; delivered cost = 4.67 + travel ≈ 5.4. Margin ≈ 1.4/unit.
+
+**Files changed:** `Parameters.jl`
+
+**Status:** implemented; search script updated with ratio constraint and rerun.
+
+#### Viable parameter ranges for future tuning
+
+Wide MC search (300,000 samples × 30 inner draws, 15 free parameters,
+`outside_wage = ow_ratio × base_wage` constraint enforced) found 4.76% of the
+full parameter space robustly viable (≥90% of inner draws pass all three
+conditions). After the first-round changes above, the updated default
+parameters score **90.6% viability**.
+
+Parameters that strongly separate viable from non-viable samples (viable median
+shifted >15% of range from the full-space midpoint):
+
+| Parameter | Viable q10 | Viable q50 | Viable q90 | Current |
+|---|---|---|---|---|
+| `productivity` | 5.82 | 8.18 | 9.68 | 6.5 (updated) |
+| `base_wage` | 8.56 | 12.33 | 14.52 | 10.0 |
+| `ow_ratio` (outside_wage/base_wage) | 0.62 | 0.82 | 0.93 | 0.80 |
+| `coeff_lo` (io_matrix_coefficient_min) | 0.07 | 0.16 | 0.36 | 0.20 |
+| `rent_lo` (initial_commercial_rent_min) | 1.44 | 3.43 | 6.62 | 3.0 (updated) |
+
+Parameters where current values are well-centered in the viable distribution
+(no flag): `op1`, `op2`, `outside_distance`, `input_tc`, `goods_tc`,
+`coeff_hi`, `rent_hi`, `sr_lo`, `sr_hi`, `travel_max`.
+
+**Condition bottleneck:** C3 (unemployed worker can afford B2C at break-even
+price) passes only 29.5% of the full parameter space at mean environment.
+C1 and C2 are almost never binding (97.8% and 87.3% pass rates). All future
+tuning should prioritise C3 headroom: higher `outside_wage` (via ratio), lower
+`coeff_lo`, lower initial commercial rent, and higher productivity all increase
+C3 pass rate independently.
+
+**Second-round parameter changes** (applied immediately after first-round):
+- `productivity`: 5.5 → 6.5 for all 6 firm types (was below viable q10=5.82)
+- `initial_commercial_rent_min`: 4.5 → 3.0 (viable q50=3.43; prior value above median)
+- `initial_commercial_rent_max`: 7.5 → 5.5 (scaled proportionally)
+
+**Files changed:** `Parameters.jl`
+
+**Status:** implemented.
+
+---
+
+### 2026-04-25: Initial price calibration and B2B price-cut rule fix
+
+#### Root causes
+
+Two compounding problems prevented local B2B firms from ever winning market share
+from outside supply, even with the outside supply mechanism in place.
+
+**1. Initial B2B prices straddle outside effective costs**
+
+Outside effective costs (with current defaults):
+- T1: `outside_input_prices[1] + input_travel_cost × outside_distance = 3.5 + 0.20×5 = 4.5`
+- T2: `outside_input_prices[2] + input_travel_cost × outside_distance = 5.0 + 0.20×5 = 6.0`
+
+Prior initial price ranges:
+- T1: [3.0, 5.0] — half the distribution (4.5–5.0) starts ABOVE outside_eff_t1
+- T2: [5.0, 7.0] — 33% of the distribution (6.0–7.0) starts ABOVE outside_eff_t2
+
+Any firm that initializes above the outside effective cost for its tier can never
+win a single B2B customer at startup. T2 buyers will always choose outside supply
+over a local T1 firm priced above 4.5.
+
+**2. Zero-sales trap in the B2B price-cut rule**
+
+`firm_reviews!` used `elseif last_sales > 0` as the price-cut condition: only cut
+if some sales occurred last period. For a T1 firm with zero sales (because its
+price exceeds outside effective cost), `last_sales = 0`, so the cut condition is
+false — price never adjusts downward. With `initial_firm_cash = 15,000`, such a
+firm could survive ~1,000 ticks at slow cash drain while its price remains stuck
+above the competitive threshold. The outside supply mechanism keeps T2 buyers
+fully supplied throughout, so the T1 firm's price overrun is never corrected.
+
+The `last_sales > 0` rule was introduced in the cold-start calibration entry to
+prevent T1 firms from cutting into break-even territory when no T2 buyers existed
+yet (the Leontief case where cutting price creates no new demand). That logic was
+correct for the pre-outside-supply world. With outside supply, T2 buyers DO exist
+but are using outside supply because local T1 is too expensive — cutting local T1
+price IS effective because buyers will switch when local price falls below outside
+effective cost.
+
+#### Fix 1: anchor initial prices below outside effective costs
+
+Revised initial price ranges so ALL initial draws are at or below outside effective
+cost:
+- T1: [3.0, 5.0] → **[2.5, 4.0]** (max 4.0 < outside_eff_t1 4.5 ✓)
+- T2: [5.0, 7.0] → **[3.5, 5.5]** (max 5.5 < outside_eff_t2 6.0 ✓)
+- T3 (B2C): [5.0, 8.0] → **[4.0, 6.5]** (max 6.5 < worker budget ~6.8 ✓)
+
+T3 calibration: unemployed worker budget = `outside_wage × (1 - savings_rate_mean)
+= 8.0 × 0.85 = 6.8`. Initial B2C goods at max 6.5 ensures consumers can afford
+at least some goods from tick 1, anchoring B2C demand.
+
+#### Fix 2: B2B firms use utilization signal for price cutting
+
+Changed `firm_reviews!` to use a tier-specific cut condition:
+- B2B firms: `last_sales == 0 && committed_output > 0` — cut only when completely
+  frozen out of the market (zero sales). This breaks the "above outside cost" trap:
+  a B2B firm priced above `outside_eff_cost[tier]` earns zero sales; cutting will
+  eventually bring the price below outside effective cost, at which point T2 buyers
+  switch back to local supply.
+- B2B firms at partial utilization (1 ≤ last_sales < committed_output): no cut. In
+  the Leontief B2B market, total input demand from T2 buyers is quantity-fixed by
+  T2's Leontief coefficients and capacity. Cutting price does not attract additional
+  T2 demand — T2 already buys all the T1 goods it needs from the cheapest available
+  source. Cutting below break-even just destroys revenue without gaining volume.
+- B2C firms: `last_sales > 0` unchanged — cut only when some consumers bought
+  but firm is not sold out. Zero B2C sales still suppresses cuts because zero B2C
+  demand is structural (workers can't afford it) rather than a price-competition loss.
+
+The distinction: B2B demand is quantity-fixed (Leontief) and price-competitive only
+at the local-vs-outside margin. B2C demand is budget-constrained and responds to
+price throughout the range.
+
+#### Files changed
+
+- `Parameters.jl`: initial price ranges for all 6 firm types
+- `Firms.jl`: `firm_reviews!` uses `do_cut` variable with B2B/B2C branching
+
+**Status:** implemented; running cold-start stability test.
+
+---
 
 ### 2026-04-23: Added location-value premium to commercial bids
 
@@ -2580,3 +2829,9 @@ Implication for next changes:
 
 - commercial-space search likely needs a stronger fallback to global vacant-space search when sampled rents are high
 - goods search likely needs wider or adaptive sampling, but the urgency appears lower than the commercial-space spike problem
+
+
+#### PASTED IN AFTER USAGE LIMIT
+he diagnosis is definitive: at tick 10, can_hire=0 across all 150 firms. The min_hire_cash_ticks=500 gate requires (payroll + posted_wage) × 500 in cash. With 3 initial workers at wage=10 (payroll=30), hiring a 4th needs (30+11)×500=20,500 — exceeding initial cash of 15,000 from day 1. Workers leave firms, can't be replaced, and all tiers spiral to 0 workers.
+
+The fix is to lower min_hire_cash_ticks. The threshold for initial hiring to be possible: (30+10)×X ≤ 15,000 → X ≤ 375. I'll use 300 to leave margin against wage inflation.

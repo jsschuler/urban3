@@ -1,11 +1,11 @@
-function worker_income(w::Worker)
-    isnothing(w.employer_id) ? 0.0 : w.current_wage
+function worker_income(w::Worker, params::ModelParams)
+    isnothing(w.employer_id) ? params.outside_wage : w.current_wage
 end
 
 function consumption_phase!(state::ModelState)
     remaining = Dict(f.id => f.committed_output for f in active_firms(state) if is_b2c(state, f))
     for w in state.workers
-        income = worker_income(w)
+        income = worker_income(w, state.params)
         income <= 0 && continue
         w.savings += income * w.savings_rate
         budget = income * (1 - w.savings_rate)
@@ -256,7 +256,7 @@ function worker_housing_search!(state::ModelState)
 end
 
 function housing_search!(::Unhoused, ::Unemployed, w::Worker, state::ModelState; force=false)
-    return false
+    return move_to_best_home!(w, state; current_required=false)
 end
 
 function housing_search!(::Unhoused, ::Employed, w::Worker, state::ModelState; force=false)
@@ -282,9 +282,15 @@ end
 function housing_affordable(w::Worker, state::ModelState, lot_id::Union{Nothing,Int})
     isnothing(lot_id) && return false
     lot = state.lots[lot_id]
-    job_lot = isnothing(w.employer_id) ? nothing : nearest_firm_lot(state.firms[w.employer_id], lot_id, state)
-    commute = isnothing(job_lot) ? 0.0 : taxicab(lot, state.lots[job_lot]) * state.params.commute_cost_per_block
-    disposable = max(0.0, w.current_wage * (1 - w.savings_rate) - commute)
+    if isnothing(w.employer_id)
+        income = state.params.outside_wage
+        commute = state.params.job_access_radius * state.params.commute_cost_per_block
+    else
+        income = w.current_wage
+        job_lot = nearest_firm_lot(state.firms[w.employer_id], lot_id, state)
+        commute = isnothing(job_lot) ? 0.0 : taxicab(lot, state.lots[job_lot]) * state.params.commute_cost_per_block
+    end
+    disposable = max(0.0, income * (1 - w.savings_rate) - commute)
     return lot.residential_rent <= disposable * state.params.housing_budget_share
 end
 
