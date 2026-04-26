@@ -181,6 +181,26 @@ function fire_worker!(state::ModelState, f::Firm, worker_id::Int)
     state.events.layoffs += 1
 end
 
+function labor_target_for_wage_review(state::ModelState, f::Firm)
+    target_sales = if length(f.realized_sales_history) >= state.params.modal_sales_lookback
+        recent = last(f.realized_sales_history, state.params.modal_sales_lookback)
+        modal_int(collect(recent))
+    else
+        max(state.params.startup_production_target, f.committed_output)
+    end
+
+    current_workers = length(f.worker_ids)
+    current_capacity = production_capacity(state, f, state.params)
+    if current_workers <= 0 || current_capacity <= 0
+        return clamp(1, 1, state.params.max_workers_per_firm)
+    end
+
+    output_per_worker = current_capacity / current_workers
+    output_per_worker <= 0 && return clamp(1, 1, state.params.max_workers_per_firm)
+    target_workers = ceil(Int, target_sales / output_per_worker)
+    return clamp(max(1, target_workers), 1, state.params.max_workers_per_firm)
+end
+
 function firm_reviews!(state::ModelState)
     for f in active_firms(state)
         if rand(state.rng) < state.params.price_review_prob
@@ -201,8 +221,20 @@ function firm_reviews!(state::ModelState)
             f.goods_price = max(0.25, f.goods_price)
         end
         if rand(state.rng) < state.params.wage_review_prob
-            has_vacancy = length(f.worker_ids) < state.params.max_workers_per_firm
-            f.posted_wage *= has_vacancy ? (1 + state.params.wage_raise_rate) : (1 - state.params.wage_cut_rate)
+            labor_target = labor_target_for_wage_review(state, f)
+            has_demand_vacancy = length(f.worker_ids) < labor_target
+            if has_demand_vacancy
+                proposed_wage = f.posted_wage * (1 + state.params.wage_raise_rate)
+                current_payroll = sum(values(f.current_worker_wages); init=0.0)
+                can_afford = f.cash >= (current_payroll + proposed_wage) * state.params.min_hire_cash_ticks
+                if can_afford
+                    f.posted_wage = proposed_wage
+                else
+                    f.posted_wage *= (1 - state.params.wage_cut_rate)
+                end
+            else
+                f.posted_wage *= (1 - state.params.wage_cut_rate)
+            end
             f.posted_wage = max(1.0, f.posted_wage)
         end
     end
@@ -316,10 +348,40 @@ end
 
 function commercial_location_gross_value(state::ModelState, f::Firm, lot_id::Int)
     consolidation_bonus = get(f.commercial_units_by_lot, lot_id, 0)
-    return state.params.firm_consumer_access_weight * state.consumer_access_by_lot[lot_id] +
+    tier = firm_supply_tier(state, f)
+    max_tier = max_supply_tier(state)
+    consumer_term = if tier == max_tier
+        state.params.firm_consumer_access_weight * state.consumer_access_by_lot[lot_id]
+    else
+        state.params.firm_b2b_consumer_access_weight * state.consumer_access_by_lot[lot_id]
+    end
+    downstream_term = tier < max_tier ?
+        state.params.firm_b2b_downstream_access_weight * firm_tier_access_at_lot(state, lot_id, tier + 1) :
+        0.0
+    upstream_term = tier > 1 ?
+        state.params.firm_b2b_upstream_access_weight * firm_tier_access_at_lot(state, lot_id, tier - 1) :
+        0.0
+    return consumer_term +
+        downstream_term +
+        upstream_term +
         state.params.firm_job_access_weight * state.job_access_by_lot[lot_id] +
         state.params.firm_employee_commute_weight * (-mean_employee_commute_to_lot(state, f, lot_id)) +
         consolidation_bonus
+end
+
+function firm_tier_access_at_lot(state::ModelState, lot_id::Int, target_tier::Int)
+    radius = state.params.consumer_access_radius
+    decay = state.params.access_distance_decay
+    destination = state.lots[lot_id]
+    total = 0.0
+    for other in active_firms(state)
+        firm_supply_tier(state, other) == target_tier || continue
+        for (other_lot_id, units) in other.commercial_units_by_lot
+            d = taxicab(destination, state.lots[other_lot_id])
+            total += units * access_weight(d, radius, decay)
+        end
+    end
+    return total
 end
 
 function mean_employee_commute_to_lot(state::ModelState, f::Firm, lot_id::Int)
@@ -392,16 +454,27 @@ function commercial_space_search!(state::ModelState, f::Firm)
     chosen_lot_id, _ = best_vacant_commercial_candidate(state, f, candidates)
     evaluated_candidates = candidates
 
-    if isnothing(chosen_lot_id) && state.params.commercial_search_global_rescue
-        chosen_lot_id = cheapest_global_vacant_commercial_lot(state, f)
-        !isnothing(chosen_lot_id) && (evaluated_candidates = collect(eachindex(state.lots)))
-    elseif !isnothing(chosen_lot_id) && !commercial_search_satisficed(state, f, anchor, candidates) &&
-        state.params.commercial_search_global_rescue
+    if state.params.commercial_search_global_rescue
         rescue_lot_id = cheapest_global_vacant_commercial_lot(state, f)
-        if !isnothing(rescue_lot_id) &&
-            state.lots[rescue_lot_id].commercial_rent < state.lots[chosen_lot_id].commercial_rent
-            chosen_lot_id = rescue_lot_id
-            evaluated_candidates = collect(eachindex(state.lots))
+        if !isnothing(rescue_lot_id)
+            force_rescue = isnothing(chosen_lot_id)
+            if !force_rescue
+                chosen_score = commercial_location_score(state, f, chosen_lot_id)
+                rescue_score = commercial_location_score(state, f, rescue_lot_id)
+                score_gain = rescue_score - chosen_score
+                score_loss = chosen_score - rescue_score
+                rent_gap = state.lots[chosen_lot_id].commercial_rent - state.lots[rescue_lot_id].commercial_rent
+                !commercial_search_satisficed(state, f, anchor, candidates) && (force_rescue = true)
+                score_gain >= state.params.commercial_search_rescue_min_score_gain && (force_rescue = true)
+                if rent_gap >= state.params.commercial_search_rescue_min_rent_gap &&
+                    score_loss <= state.params.commercial_search_rescue_max_score_loss
+                    force_rescue = true
+                end
+            end
+            if force_rescue
+                chosen_lot_id = rescue_lot_id
+                evaluated_candidates = collect(eachindex(state.lots))
+            end
         end
     end
 

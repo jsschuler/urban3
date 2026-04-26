@@ -54,6 +54,9 @@ Base.@kwdef mutable struct ModelParams
     commercial_search_target_vacant_candidates::Int = 3
     commercial_search_acceptance_multiplier::Float64 = 1.25
     commercial_search_global_rescue::Bool = true
+    commercial_search_rescue_min_rent_gap::Float64 = 5.0
+    commercial_search_rescue_min_score_gain::Float64 = 0.50
+    commercial_search_rescue_max_score_loss::Float64 = 0.25
     goods_travel_cost_per_block::Float64 = 0.35
     goods_choice_sensitivity::Float64 = 4.0
     goods_price_weight::Float64 = 1.0
@@ -65,6 +68,9 @@ Base.@kwdef mutable struct ModelParams
     access_distance_decay::Float64 = 1.0
     housing_job_access_weight::Float64 = 0.20
     firm_consumer_access_weight::Float64 = 0.08
+    firm_b2b_consumer_access_weight::Float64 = 0.01
+    firm_b2b_downstream_access_weight::Float64 = 0.10
+    firm_b2b_upstream_access_weight::Float64 = 0.04
     firm_job_access_weight::Float64 = 0.03
     firm_employee_commute_weight::Float64 = 0.25
     commercial_bid_share::Float64 = 0.12

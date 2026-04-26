@@ -2910,3 +2910,77 @@ Status: open. Need to decide between Options A and B before implementing.
 B2B firms (T1, T2) use the consumer-access signal for commercial bidding, the same as B2C. This places them in competition for central lots near consumers, where consumer-facing revenue is highest but B2B revenue is determined by proximity to downstream buyers, not consumers. B2B firms end up either at expensive central locations they can't justify, or at peripheral lots where workers don't find them in job search. Workers spatially cluster near T3 (central), leaving T1/T2 (peripheral) understaffed. This is a separate structural problem from the wage spiral but compounds it for B2B tiers.
 
 The fix is to lower min_hire_cash_ticks. The threshold for initial hiring to be possible: (30+10)×X ≤ 15,000 → X ≤ 375. I'll use 300 to leave margin against wage inflation.
+
+### 2026-04-25: Implemented patch set — wage-lock fix, tiered siting, stronger commercial rescue
+
+Implemented across `src/Firms.jl` and `src/Parameters.jl`.
+
+#### 1) Wage spiral / hiring re-lock mitigation (Option B + affordability guard)
+
+**What changed**
+
+- Added `labor_target_for_wage_review(state, f)` in `Firms.jl`.
+  - Uses a sales-implied labor target based on modal recent sales (`modal_sales_lookback`), with startup fallback to `max(startup_production_target, committed_output)`.
+  - Converts target sales to target workers using current `production_capacity / current_workers`.
+  - Clamped to `[1, max_workers_per_firm]`.
+- Updated wage review block in `firm_reviews!`:
+  - Replaced vacancy test `length(worker_ids) < max_workers_per_firm` with demand-based vacancy test `length(worker_ids) < labor_target`.
+  - Wage raise now requires affordability at the **proposed** wage:
+    - `can_afford = cash >= (current_payroll + proposed_wage) * min_hire_cash_ticks`
+  - If demand vacancy exists but affordability fails, wage is cut (prevents runaway escalation under a binding cash gate).
+
+**Intended effect**
+
+- Breaks the positive feedback loop where persistent cap-based vacancies force wage growth that tightens the hire gate.
+- Aligns wage increases with actual labor demand and feasible hiring.
+
+#### 2) Tier-specific commercial location signal for B2B firms
+
+**What changed**
+
+- Added tier-network access helper `firm_tier_access_at_lot(state, lot_id, target_tier)` in `Firms.jl`.
+- Updated `commercial_location_gross_value`:
+  - Tier 3 (B2C) retains consumer-access-driven term via `firm_consumer_access_weight`.
+  - Tiers 1/2 (B2B) now use:
+    - low residual consumer pull,
+    - downstream-tier access pull,
+    - upstream-tier access pull,
+    - plus existing job-access, commute, and consolidation terms.
+
+**New parameters in `ModelParams`**
+
+- `firm_b2b_consumer_access_weight::Float64 = 0.01`
+- `firm_b2b_downstream_access_weight::Float64 = 0.10`
+- `firm_b2b_upstream_access_weight::Float64 = 0.04`
+
+**Intended effect**
+
+- Reduces B2B over-reliance on consumer-centrality and increases clustering around supplier-customer tier structure.
+
+#### 3) Commercial-space global rescue thresholding (tail-rent suppression)
+
+**What changed**
+
+- Reworked rescue logic in `commercial_space_search!`:
+  - Always evaluates global rescue candidate when `commercial_search_global_rescue=true`.
+  - Rescue activates if any of:
+    - no local choice,
+    - local sampled set not satisficed,
+    - global score gain exceeds threshold,
+    - chosen-rent minus rescue-rent exceeds threshold **and** score loss is within tolerance.
+  - On rescue, evaluated candidates are promoted to global for logging/diagnostics consistency.
+
+**New parameters in `ModelParams`**
+
+- `commercial_search_rescue_min_rent_gap::Float64 = 5.0`
+- `commercial_search_rescue_min_score_gain::Float64 = 0.50`
+- `commercial_search_rescue_max_score_loss::Float64 = 0.25`
+
+**Intended effect**
+
+- Prevents extreme overpay choices from surviving local undersampling unless they provide a meaningful location-score advantage.
+
+#### Verification status
+
+- Code edits completed.
+- Runtime validation was **not** executed in this environment because `julia` is not available on PATH (`command not found: julia`).
