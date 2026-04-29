@@ -2,15 +2,29 @@ function worker_income(w::Worker, params::ModelParams)
     isnothing(w.employer_id) ? params.outside_wage : w.current_wage
 end
 
+function build_lot_firm_index(state::ModelState; b2c_only::Bool=false)
+    idx = Dict{Int,Vector{Int}}()
+    for fid in state.active_firm_ids
+        f = state.firms[fid]
+        b2c_only && !is_b2c(state, f) && continue
+        for lid in keys(f.commercial_units_by_lot)
+            push!(get!(idx, lid, Int[]), fid)
+        end
+    end
+    return idx
+end
+
 function consumption_phase!(state::ModelState)
     remaining = Dict(f.id => f.committed_output for f in active_firms(state) if is_b2c(state, f))
-    for w in state.workers
+    lot_firm_idx = build_lot_firm_index(state; b2c_only=true)
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
         income = worker_income(w, state.params)
         income <= 0 && continue
         w.savings += income * w.savings_rate
         budget = income * (1 - w.savings_rate)
         while budget >= 0.25
-            choice, delivered_cost = choose_good(w, state, remaining, budget)
+            choice, delivered_cost = choose_good(w, state, remaining, budget, lot_firm_idx)
             isnothing(choice) && break
             f = state.firms[choice]
             budget -= delivered_cost
@@ -22,7 +36,7 @@ function consumption_phase!(state::ModelState)
     end
 end
 
-function choose_good(w::Worker, state::ModelState, remaining::Dict{Int,Int}, budget::Float64)
+function choose_good(w::Worker, state::ModelState, remaining::Dict{Int,Int}, budget::Float64, lot_firm_idx::Dict{Int,Vector{Int}})
     habitual_choice = habitual_goods_choice(w, state, remaining, budget)
     if !isnothing(habitual_choice)
         choice_id, choice_score, delivered_cost = habitual_choice
@@ -39,10 +53,10 @@ function choose_good(w::Worker, state::ModelState, remaining::Dict{Int,Int}, bud
         domain=:goods,
         actor_kind=:worker,
         actor_id=w.id,
-        accept=(lots, stage) -> affordable_sampled_goods_count(w, state, remaining, budget, lots) >=
+        accept=(lots, stage) -> affordable_sampled_goods_count(w, state, remaining, budget, lots, lot_firm_idx) >=
             state.params.goods_search_target_affordable_candidates,
     )
-    choice_id, choice_score, delivered_cost = probabilistic_goods_choice(w, state, remaining, budget, sampled_lots)
+    choice_id, choice_score, delivered_cost = probabilistic_goods_choice(w, state, remaining, budget, sampled_lots, lot_firm_idx)
     log_goods_search_diagnostic!(state, w, origin, budget, sampled_lots, choice_id, choice_score)
     return choice_id, delivered_cost
 end
@@ -112,36 +126,37 @@ function probabilistic_goods_choice(
     remaining::Dict{Int,Int},
     budget::Float64,
     sampled_lots::Vector{Int},
+    lot_firm_idx::Dict{Int,Vector{Int}},
 )
-    sampled_set = Set(sampled_lots)
     origin_lot_id = worker_anchor_lot(w, state)
+    seen_firms = Set{Int}()
     candidate_ids = Int[]
     candidate_scores = Float64[]
     candidate_costs = Float64[]
 
-    for f in active_firms(state)
-        get(remaining, f.id, 0) <= 0 && continue
-        candidate_lots = [lid for lid in keys(f.commercial_units_by_lot) if lid in sampled_set]
-        isempty(candidate_lots) && continue
-        service_lot_id = isnothing(origin_lot_id) ? first(candidate_lots) :
-            nearest_firm_lot(f, origin_lot_id, state)
-        isnothing(service_lot_id) && continue
-        delivered_cost = delivered_goods_cost(state, f, origin_lot_id, service_lot_id)
-        delivered_cost > budget && continue
-        utility = delivered_goods_utility(w, state, f, origin_lot_id, service_lot_id)
-        push!(candidate_ids, f.id)
-        push!(candidate_scores, utility)
-        push!(candidate_costs, delivered_cost)
+    for lid in sampled_lots
+        haskey(lot_firm_idx, lid) || continue
+        for fid in lot_firm_idx[lid]
+            fid in seen_firms && continue
+            push!(seen_firms, fid)
+            get(remaining, fid, 0) <= 0 && continue
+            f = state.firms[fid]
+            service_lot_id = isnothing(origin_lot_id) ? lid :
+                nearest_firm_lot(f, origin_lot_id, state)
+            isnothing(service_lot_id) && continue
+            delivered_cost = delivered_goods_cost(state, f, origin_lot_id, service_lot_id)
+            delivered_cost > budget && continue
+            utility = delivered_goods_utility(w, state, f, origin_lot_id, service_lot_id)
+            push!(candidate_ids, fid)
+            push!(candidate_scores, utility)
+            push!(candidate_costs, delivered_cost)
+        end
     end
 
     isempty(candidate_ids) && return nothing, -Inf, Inf
 
     max_score = maximum(candidate_scores)
-    weights = Float64[]
-    for score in candidate_scores
-        push!(weights, exp(state.params.goods_choice_sensitivity * (score - max_score)))
-    end
-
+    weights = [exp(state.params.goods_choice_sensitivity * (score - max_score)) for score in candidate_scores]
     total_weight = sum(weights)
     total_weight <= 0 && return nothing, -Inf, Inf
 
@@ -163,48 +178,56 @@ function affordable_sampled_goods_count(
     remaining::Dict{Int,Int},
     budget::Float64,
     sampled_lots::Vector{Int},
+    lot_firm_idx::Dict{Int,Vector{Int}},
 )
-    sampled_set = Set(sampled_lots)
-    count = 0
     origin_lot_id = worker_anchor_lot(w, state)
-    for f in active_firms(state)
-        get(remaining, f.id, 0) <= 0 && continue
-        candidate_lots = [lid for lid in keys(f.commercial_units_by_lot) if lid in sampled_set]
-        isempty(candidate_lots) && continue
-        service_lot_id = isnothing(origin_lot_id) ? first(candidate_lots) :
-            nearest_firm_lot(f, origin_lot_id, state)
-        isnothing(service_lot_id) && continue
-        travel_cost = isnothing(origin_lot_id) ? 0.0 :
-            taxicab(state.lots[origin_lot_id], state.lots[service_lot_id]) * state.params.goods_travel_cost_per_block
-        f.goods_price + travel_cost > budget && continue
-        count += 1
+    seen_firms = Set{Int}()
+    count = 0
+    for lid in sampled_lots
+        haskey(lot_firm_idx, lid) || continue
+        for fid in lot_firm_idx[lid]
+            fid in seen_firms && continue
+            push!(seen_firms, fid)
+            get(remaining, fid, 0) <= 0 && continue
+            f = state.firms[fid]
+            service_lot_id = isnothing(origin_lot_id) ? lid :
+                nearest_firm_lot(f, origin_lot_id, state)
+            isnothing(service_lot_id) && continue
+            travel_cost = isnothing(origin_lot_id) ? 0.0 :
+                taxicab(state.lots[origin_lot_id], state.lots[service_lot_id]) * state.params.goods_travel_cost_per_block
+            f.goods_price + travel_cost > budget && continue
+            count += 1
+        end
     end
     return count
 end
 
 function worker_job_search!(state::ModelState)
-    for w in state.workers
-        rand(state.rng) > state.params.job_review_prob && continue
-        job_search!(employment_state(w), housing_state(w), w, state)
+    lot_firm_idx = build_lot_firm_index(state)
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
+        prob = isnothing(w.employer_id) ? state.params.job_search_prob_unemployed : state.params.job_search_prob_employed
+        rand(state.rng) > prob && continue
+        job_search!(employment_state(w), housing_state(w), w, state, lot_firm_idx)
     end
 end
 
-function job_search!(::Unemployed, ::Unhoused, w::Worker, state::ModelState)
-    return apply_best_job!(w, state)
+function job_search!(::Unemployed, ::Unhoused, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    return apply_best_job!(w, state, lot_firm_idx)
 end
 
-function job_search!(::Unemployed, ::Housed, w::Worker, state::ModelState)
-    return apply_best_job!(w, state)
+function job_search!(::Unemployed, ::Housed, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    return apply_best_job!(w, state, lot_firm_idx)
 end
 
-function job_search!(::Employed, ::Unhoused, w::Worker, state::ModelState)
+function job_search!(::Employed, ::Unhoused, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
     return false
 end
 
-function job_search!(::Employed, ::Housed, w::Worker, state::ModelState)
+function job_search!(::Employed, ::Housed, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
     w.moved_home_this_tick && return false
     current = w.current_wage
-    best = best_job(w, state)
+    best = best_job(w, state, lot_firm_idx)
     isnothing(best) && return false
     f = state.firms[best]
     if f.posted_wage > current * 1.08
@@ -215,13 +238,13 @@ function job_search!(::Employed, ::Housed, w::Worker, state::ModelState)
     return false
 end
 
-function apply_best_job!(w::Worker, state::ModelState)
-    best = best_job(w, state)
+function apply_best_job!(w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    best = best_job(w, state, lot_firm_idx)
     isnothing(best) && return false
     return hire_worker!(state, w, state.firms[best])
 end
 
-function best_job(w::Worker, state::ModelState)
+function best_job(w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
     origin = worker_anchor_lot(w, state)
     sampled = candidate_lots(
         state,
@@ -231,27 +254,52 @@ function best_job(w::Worker, state::ModelState)
         actor_kind=:worker,
         actor_id=w.id,
     )
+    sampled_set = Set(sampled)
+    seen_firms = Set{Int}()
     best_id = nothing
     best_net = -Inf
-    for f in active_firms(state)
-        length(f.worker_ids) >= state.params.max_workers_per_firm && continue
-        lid = nearest_firm_lot(f, origin, state)
-        isnothing(lid) && continue
-        lid in sampled || continue
-        commute = isnothing(w.dwelling_lot_id) ? 0.0 : taxicab(state.lots[w.dwelling_lot_id], state.lots[lid]) * state.params.commute_cost_per_block
-        net = f.posted_wage - commute
-        if net > best_net
-            best_net = net
-            best_id = f.id
+    for lid in sampled
+        haskey(lot_firm_idx, lid) || continue
+        for fid in lot_firm_idx[lid]
+            fid in seen_firms && continue
+            push!(seen_firms, fid)
+            f = state.firms[fid]
+            length(f.worker_ids) >= state.params.max_workers_per_firm && continue
+            nearest = nearest_firm_lot(f, origin, state)
+            isnothing(nearest) && continue
+            nearest in sampled_set || continue
+            commute = isnothing(w.dwelling_lot_id) ? 0.0 :
+                taxicab(state.lots[w.dwelling_lot_id], state.lots[nearest]) * state.params.commute_cost_per_block
+            net = f.posted_wage - commute
+            if net > best_net
+                best_net = net
+                best_id = fid
+            end
         end
     end
     return best_id
 end
 
 function worker_housing_search!(state::ModelState)
-    for w in state.workers
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
         rand(state.rng) > state.params.housing_review_prob && continue
         housing_search!(housing_state(w), employment_state(w), w, state)
+    end
+end
+
+function worker_exit!(state::ModelState)
+    for wid in collect(state.active_worker_ids)
+        w = state.workers[wid]
+        if isnothing(w.employer_id)
+            w.inactive_ticks += 1
+            if w.inactive_ticks >= state.params.worker_exit_threshold
+                !isnothing(w.dwelling_lot_id) && vacate_home!(w, state)
+                delete!(state.active_worker_ids, wid)
+            end
+        else
+            w.inactive_ticks = 0
+        end
     end
 end
 

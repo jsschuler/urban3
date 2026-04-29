@@ -19,6 +19,7 @@ function draw_worker(id::Int, params::ModelParams, rng::AbstractRNG)
         Dict{Int,Float64}(),
         false,
         false,
+        0,
     )
 end
 
@@ -56,7 +57,8 @@ function init_state(params::ModelParams=ModelParams())
         id += 1
     end
     workers = [draw_worker(i, params, rng) for i in 1:params.initial_workers]
-    state = ModelState(0, params, rng, lots, workers, Firm[], reset_events!(),
+    active_worker_ids = Set{Int}(1:params.initial_workers)
+    state = ModelState(0, params, rng, lots, workers, Firm[], Set{Int}(), active_worker_ids, reset_events!(),
         init_decision_log(params.decision_log_limit),
         init_market_log(params.market_log_limit),
         init_search_coverage_log(params.search_log_limit),
@@ -79,7 +81,11 @@ function init_state(params::ModelParams=ModelParams())
 end
 
 function active_firms(state::ModelState)
-    [f for f in state.firms if f.active]
+    [state.firms[id] for id in state.active_firm_ids]
+end
+
+function active_workers(state::ModelState)
+    [state.workers[id] for id in state.active_worker_ids]
 end
 
 function initial_hire!(state::ModelState)

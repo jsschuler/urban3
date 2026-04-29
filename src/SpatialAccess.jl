@@ -3,30 +3,41 @@ function access_weight(distance::Int, radius::Int, decay::Float64)
     return 1.0 / ((1 + distance) ^ decay)
 end
 
-function refresh_consumer_access!(state::ModelState)
-    fill!(state.consumer_access_by_lot, 0.0)
-    radius = state.params.consumer_access_radius
-    decay = state.params.access_distance_decay
-    housed_counts = zeros(Float64, length(state.lots))
-    for w in state.workers
-        isnothing(w.dwelling_lot_id) && continue
-        housed_counts[w.dwelling_lot_id] += 1.0
-    end
-    occupied_ids = findall(>(0.0), housed_counts)
-    for lot in state.lots
-        total = 0.0
-        for origin_id in occupied_ids
-            d = taxicab(lot, state.lots[origin_id])
-            total += housed_counts[origin_id] * access_weight(d, radius, decay)
+function scatter_access!(dest::Vector{Float64}, source_by_lot::Vector{Float64},
+                         lots::Vector{Lot}, width::Int, height::Int,
+                         radius::Int, decay::Float64)
+    fill!(dest, 0.0)
+    for origin_id in eachindex(source_by_lot)
+        source_by_lot[origin_id] == 0.0 && continue
+        weight = source_by_lot[origin_id]
+        o = lots[origin_id]
+        for dy in -radius:radius
+            y = o.y + dy
+            (y < 1 || y > height) && continue
+            dx_max = radius - abs(dy)
+            for dx in -dx_max:dx_max
+                x = o.x + dx
+                (x < 1 || x > width) && continue
+                lid = lot_id_at(x, y, width)
+                dest[lid] += weight * access_weight(abs(dx) + abs(dy), radius, decay)
+            end
         end
-        state.consumer_access_by_lot[lot.id] = total
     end
 end
 
+function refresh_consumer_access!(state::ModelState)
+    housed_counts = zeros(Float64, length(state.lots))
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
+        isnothing(w.dwelling_lot_id) && continue
+        housed_counts[w.dwelling_lot_id] += 1.0
+    end
+    scatter_access!(state.consumer_access_by_lot, housed_counts,
+                    state.lots, state.params.width, state.params.height,
+                    state.params.consumer_access_radius, state.params.access_distance_decay)
+end
+
 function refresh_job_access!(state::ModelState)
-    fill!(state.job_access_by_lot, 0.0)
-    radius = state.params.job_access_radius
-    decay = state.params.access_distance_decay
     vacancy_by_lot = zeros(Float64, length(state.lots))
     for f in active_firms(state)
         vacancies = max(0, state.params.max_workers_per_firm - length(f.worker_ids))
@@ -35,15 +46,9 @@ function refresh_job_access!(state::ModelState)
             vacancy_by_lot[lid] += vacancies * max(units, 1)
         end
     end
-    vacancy_ids = findall(>(0.0), vacancy_by_lot)
-    for lot in state.lots
-        total = 0.0
-        for origin_id in vacancy_ids
-            d = taxicab(lot, state.lots[origin_id])
-            total += vacancy_by_lot[origin_id] * access_weight(d, radius, decay)
-        end
-        state.job_access_by_lot[lot.id] = total
-    end
+    scatter_access!(state.job_access_by_lot, vacancy_by_lot,
+                    state.lots, state.params.width, state.params.height,
+                    state.params.job_access_radius, state.params.access_distance_decay)
 end
 
 function refresh_spatial_access!(state::ModelState)

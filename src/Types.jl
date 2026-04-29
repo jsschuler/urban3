@@ -34,6 +34,7 @@ mutable struct Worker
     social_ties::Dict{Int,Float64}
     moved_job_this_tick::Bool
     moved_home_this_tick::Bool
+    inactive_ticks::Int
 end
 
 mutable struct Firm
@@ -54,6 +55,7 @@ mutable struct Firm
     profit_history::Vector{Float64}
     active::Bool
     startup_pending::Bool
+    founded_tick::Int
     inputs_acquired::Dict{Int,Int}   # b2b firm_type => units acquired this tick
     input_cost_this_tick::Float64    # total input spending this tick
     cash::Float64                    # current cash balance; insolvency (< 0) triggers liquidation
@@ -195,6 +197,8 @@ mutable struct ModelState
     lots::Vector{Lot}
     workers::Vector{Worker}
     firms::Vector{Firm}
+    active_firm_ids::Set{Int}
+    active_worker_ids::Set{Int}
     events::TickEvents
     decision_log::DecisionLog
     market_log::MarketLog

@@ -51,12 +51,9 @@ Base.@kwdef mutable struct ModelParams
         local_weight_decay=0.20,
     )
     goods_search_target_affordable_candidates::Int = 3
-    commercial_search_target_vacant_candidates::Int = 3
+    commercial_search_target_vacant_candidates::Int = 1
     commercial_search_acceptance_multiplier::Float64 = 1.25
-    commercial_search_global_rescue::Bool = true
-    commercial_search_rescue_min_rent_gap::Float64 = 5.0
-    commercial_search_rescue_min_score_gain::Float64 = 0.50
-    commercial_search_rescue_max_score_loss::Float64 = 0.25
+    commercial_global_fallback_samples::Int = 64
     goods_travel_cost_per_block::Float64 = 0.35
     goods_choice_sensitivity::Float64 = 4.0
     goods_price_weight::Float64 = 1.0
@@ -119,7 +116,8 @@ Base.@kwdef mutable struct ModelParams
     savings_rate_max::Float64 = 0.25
     commute_cost_per_block::Float64 = 0.12
     housing_budget_share::Float64 = 0.35
-    job_review_prob::Float64 = 0.20
+    job_search_prob_unemployed::Float64 = 1.0
+    job_search_prob_employed::Float64 = 0.10
     housing_review_prob::Float64 = 0.20
 
     residential_rent_raise_rate::Float64 = 0.03
@@ -155,9 +153,10 @@ Base.@kwdef mutable struct ModelParams
     initial_firm_cash::Float64 = 15_000.0
     initial_hire_per_firm::Int = 3
     startup_production_target::Int = 2
-    min_hire_cash_ticks::Int = 300
+    min_hire_cash_ticks::Int = 5
 
     outside_entry_rate::Float64 = 3.0
+    worker_exit_threshold::Int = 150
     blender_update_every::Int = 5
 
     enable_decision_logging::Bool = true

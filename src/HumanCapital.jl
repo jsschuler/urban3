@@ -13,7 +13,8 @@ function workplace_distance(state::ModelState, worker_a::Worker, worker_b::Worke
 end
 
 function human_capital_phase!(state::ModelState)
-    for worker in state.workers
+    for wid in state.active_worker_ids
+        worker = state.workers[wid]
         isnothing(worker.employer_id) && continue
         worker.experience_ticks += 1
         worker.human_capital = min(
@@ -24,7 +25,8 @@ function human_capital_phase!(state::ModelState)
 end
 
 function decay_worker_ties!(state::ModelState)
-    for worker in state.workers
+    for wid in state.active_worker_ids
+        worker = state.workers[wid]
         tie_ids = collect(keys(worker.social_ties))
         for other_id in tie_ids
             other_id > length(state.workers) && (delete!(worker.social_ties, other_id); continue)

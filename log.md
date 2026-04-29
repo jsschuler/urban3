@@ -2984,3 +2984,580 @@ Implemented across `src/Firms.jl` and `src/Parameters.jl`.
 
 - Code edits completed.
 - Runtime validation was **not** executed in this environment because `julia` is not available on PATH (`command not found: julia`).
+
+### 2026-04-26: Entrepreneurship eligibility fix + scheduler redesign decision
+
+#### A) Implemented: allow former owners of inactive firms to found again
+
+Problem:
+
+- Founding logic required `isempty(w.ownership_shares)` for both solo and coalition entrepreneurship.
+- Liquidation did not clear historical ownership entries from workers.
+- Result: any worker who had ever owned a firm was permanently excluded from future founding.
+
+Change implemented in `src/Entrepreneurship.jl`:
+
+- Added `has_active_ownership(state, w)` helper:
+  - returns true only if worker owns shares in at least one **active** firm.
+- Replaced entrepreneurship filters:
+  - solo path: skip only when `has_active_ownership(state, w)` is true
+  - coalition candidate filter: include workers when `!has_active_ownership(state, w)` and `w.savings > 0`
+
+Effect:
+
+- Former owners of liquidated/inactive firms can now re-enter entrepreneurship.
+- Workers still cannot found while actively owning another live firm.
+
+Validation:
+
+- Short smoke run completed successfully after patch (40 ticks).
+
+#### B) Agreed redesign (not yet implemented): two-stage startup activation with order `found -> hire -> produce`
+
+Decision:
+
+- Use the safer two-stage activation variant first:
+  - firms founded this tick can hire this tick,
+  - first production commitment starts next tick.
+
+Rationale:
+
+- Reduces startup mortality from current ordering where firms can face contraction/liquidation risk before stabilizing labor.
+- Preserves causal ordering without introducing abrupt same-tick production shocks.
+
+Implementation plan (next step):
+
+1. **Scheduler phase reordering**
+   - move entrepreneurship earlier in tick, before worker hiring search.
+   - ensure commercial bid resolution for entrants occurs before hiring.
+2. **Startup state semantics**
+   - preserve `startup_pending`/new flag semantics so entrants are visible to hiring immediately.
+   - block production commitment for newly founded firms until next tick.
+3. **Liquidation guard for new entrants**
+   - prevent zero-worker liquidation checks from firing on the same tick a firm is created.
+4. **Metrics/diagnostics**
+   - add startup cohort diagnostics: founded, hired-at-least-one-within-1-tick, liquidated-within-5-ticks.
+5. **Validation pass**
+   - rerun multi-seed 5000-tick tests and compare:
+     - net firm count trajectory,
+     - employment rate,
+     - demand vacancies vs cap vacancies,
+     - startup survival.
+
+### 2026-04-26: Persistent labor slack diagnosis + implemented startup sequencing changes
+
+#### Investigation summary (seed 77 long run)
+
+To diagnose persistent labor slack, we instrumented demand-vacancy vs cap-vacancy dynamics and startup/founding behavior.
+
+Key snapshots (seed 77):
+
+```text
+tick 500:  pop=3990  emp=1372 (34.4%)  firms=108
+           demand_vacancies=0  cap_vacancies=572
+           can_hire_any=59  can_hire_demand=0
+
+tick 1000: pop=4993  emp=1260 (25.2%)  firms=88
+           demand_vacancies=1  cap_vacancies=324
+
+tick 1500: pop=6038  emp=1238 (20.5%)  firms=71
+           demand_vacancies=2  cap_utilization=0.9687
+
+tick 2000: pop=6988  emp=1242 (17.8%)  firms=70
+           demand_vacancies=1  cap_utilization=0.9857
+
+tick 2500: pop=7961  emp=1224 (15.4%)  firms=68
+           demand_vacancies=0  cap_vacancies=0  cap_utilization=1.0
+```
+
+Interpretation:
+
+- The dominant late-run mechanism is **capacity saturation**, not inability to hire.
+- Surviving firms become nearly fully staffed relative to model cap while population continues growing.
+- Employment rate declines because labor demand does not scale with entrant population.
+
+#### Profit question clarified
+
+Question raised: if demand rises while supply does not, should profits rise?
+
+Answer in this implementation: **not necessarily**.
+
+- Profit is `revenue - wages - rent - input_costs`.
+- Price adjustment and cost pressure can offset demand increases.
+- Therefore demand growth can coexist with flat/declining margins and weak entry.
+
+#### Implemented code changes
+
+Implemented in this pass:
+
+1. **Former-owner re-entry into entrepreneurship**
+   - already patched earlier today:
+   - founding eligibility now blocks only workers with ownership in active firms.
+
+2. **Scheduler reordering to `found -> hire -> produce`**
+   - `entrepreneurship_phase!` now runs before worker job search and production phases.
+   - `resolve_commercial_bids!` remains immediately after entrepreneurship so entrants can secure space before hiring.
+   - `worker_job_search!` now runs before production commitment phases.
+
+3. **Two-stage startup activation**
+   - added `founded_tick::Int` to `Firm`.
+   - newly founded firms skip production commitment on their birth tick.
+
+4. **Birth-tick liquidation guard**
+   - `firm_contraction_expansion!` skips contraction/liquidation logic for firms founded on current tick.
+   - avoids immediate startup failure before at least one post-entry adjustment cycle.
+
+#### Validation run after changes
+
+- Smoke test passed (`120` ticks, no errors).
+- `test_coldstart.jl` completed through tick `500` successfully.
+- Hiring feasibility remained nonzero across tiers after startup period; no wage-lock relapse observed.
+
+---
+
+### 2026-04-26: Spatial access performance — scatter kernel + redundant refresh removal
+
+#### Motivation
+
+Headless runs were blocking on `refresh_spatial_access!`. On a 40×40 grid with
+3000+ workers, the prior gather implementation was O(lots × occupied_lots) per
+call = ~2.24M inner iterations, called 5 times per tick. Combined with unbounded
+growth of `state.firms` (dead firms never removed), this compounded each tick.
+
+#### Changes
+
+**`SpatialAccess.jl` — gather → scatter algorithm**
+
+Replaced the nested gather loop (for each destination lot, sum over all source
+lots) with a scatter kernel (`scatter_access!`) that iterates over occupied source
+lots only and writes into the diamond of reachable destination lots using the
+taxicab triangle constraint:
+
+```julia
+for dy in -radius:radius
+    dx_max = radius - abs(dy)
+    for dx in -dx_max:dx_max
+        ...
+    end
+end
+```
+
+This makes the inner loop O(lots_within_radius) ≈ π×r² rather than O(all_lots).
+At radius=8 on a 40×40 grid, ~87% of lot pairs are out of range; the old loop
+computed a taxicab distance and a multiply for all of them. Expected speedup per
+call: ~8–10×.
+
+**`Scheduler.jl` — 5 refresh calls reduced to 3**
+
+Two calls were redundant:
+- Call at tick start (line 13): duplicated the end-of-tick refresh from the
+  previous step; spatial data does not change between ticks.
+- Call after `calculate_profits!` (line 28): nothing affecting firm or worker
+  locations runs between the post-bid refresh and this point.
+
+Remaining calls: after `resolve_commercial_bids!` (firms may have moved), after
+`firm_contraction_expansion!` (firms may have expanded), and at end of tick
+(canonical refresh for next tick's firm and housing decisions).
+
+#### Trade-off to revisit
+
+`firm_reviews!` and `entrepreneurship_phase!` now consume spatial data from the
+end of the previous tick rather than a fresh refresh. These functions use spatial
+scores for ranking (not absolute thresholds), so one-tick staleness is not expected
+to change model outcomes. If spatial responsiveness of firm location decisions is
+ever a concern, the start-of-tick refresh can be restored by adding
+`refresh_spatial_access!(state)` before `human_capital_phase!` in `Scheduler.jl`.
+
+Status: implemented, pending gradient validation.
+
+---
+
+### 2026-04-26: Ownership/employment separation and hiring threshold fix
+
+#### Motivation
+
+Diagnostic run (500 ticks, 20×20, 500 workers, 30 initial firms) revealed massive
+firm churn: ~5 entries and exits per tick, with net firm count barely stable and
+growing unemployment. Root cause: `min_hire_cash_ticks = 300` required
+`300 × base_wage = 3,000` cash to hire a single worker, but solo and coalition
+startup capital was only 120–180. Every new firm immediately liquidated on the
+following tick due to zero workers, never having been able to hire.
+
+A secondary issue: `has_active_ownership` blocked workers who already owned a
+firm from participating in new solo or coalition foundings, unnecessarily
+restricting the pool of potential entrepreneurs.
+
+#### Changes
+
+**`Parameters.jl` — `min_hire_cash_ticks` 300 → 5**
+
+Lowers the hiring cash buffer from a 300-tick payroll reserve to a 5-tick
+solvency check. With `base_wage = 10` and solo startup capital of 120, a new
+firm can now hire its first worker (threshold: 50 cash) and retain ~70 for rent
+while it ramps up. Established firms are also affected but the 5-tick buffer is
+still a meaningful guard against immediately-insolvent hiring.
+
+**`Firms.jl` — remove zero-workers death condition**
+
+Removed `length(f.worker_ids) == 0` from the liquidation trigger in
+`firm_contraction_expansion!`. A firm that fails to hire now persists, paying
+rent from its cash balance, and liquidates only when `cash < 0`. This correctly
+separates insolvency (the meaningful death signal) from a transient failure to
+recruit.
+
+**`Entrepreneurship.jl` — remove `has_active_ownership` gate**
+
+Removed the gate that prevented workers who already own a firm from founding
+additional ones. Both solo founding and coalition candidate selection now use
+`w.savings` as the sole eligibility criterion. No double-counting risk: founders
+only invest personal liquid savings (deducted in `found_firm!`); firm assets
+remain with the firm. Workers who invested all savings in an existing firm will
+have zero savings and cannot invest further — the natural accounting guard.
+
+Status: implemented.
+
+---
+
+### 2026-04-26: Commercial space expansion — three compounding bugs fixed
+
+#### Motivation
+
+Cohort analysis at tick 400 (40×40, seed=12) showed `com_units=1.0` for every
+age cohort, including firms with 200+ ticks of age, 10+ capital units, and
+46,000+ cash. Established firms were accumulating capital and cash but never
+expanding their spatial footprint. This prevented any commercial rent gradient
+from forming: with every firm occupying exactly one lot, there was no spatial
+competition mechanism.
+
+Instrumentation revealed three independent bugs, each of which would have
+prevented expansion alone.
+
+#### Bug 1: Bid buffer cleared before resolution (`Scheduler.jl`)
+
+`reset_tick_flags!` called `empty!(state.commercial_bid_buffer)` at the start
+of every tick. `firm_contraction_expansion!` runs near the end of a tick and
+places expansion bids in the buffer. `resolve_commercial_bids!` runs near the
+start of the *next* tick — after `reset_tick_flags!` had already wiped the
+buffer. Every expansion bid ever placed was silently discarded before
+resolution. `resolve_commercial_bids!` already calls `empty!` on the buffer
+at its own end, so the reset-tick clear was both redundant and destructive.
+
+**Fix:** removed `empty!(state.commercial_bid_buffer)` from `reset_tick_flags!`.
+
+#### Bug 2: Global rescue funnels all firms to the same lot (`Firms.jl`)
+
+The old `commercial_space_search!` required ≥3 vacant candidates locally to
+pass satisficing. In a dense grid most firms failed this check, triggering the
+global rescue path: `cheapest_global_vacant_commercial_lot` — a deterministic
+O(lots × active_firms) scan that returned the same globally-best lot for every
+firm calling it in the same tick. All expansion bids targeted identical lots;
+only one winner per tick per lot; effectively all expansion bids lost. This was
+also the dominant O(N²) performance bottleneck.
+
+**Fix:** rewrote `commercial_space_search!`. Accept condition is now "any vacant
+lot found" (O(1) per candidate). Lot selection uses `commercial_location_score_fast`
+— consumer/job access + consolidation bonus minus rent, all from precomputed
+arrays, O(1) per lot. Fallback when local search finds nothing is a random
+sample of `commercial_global_fallback_samples` (default 64) lots rather than
+a global best-score scan. Different firms get different fallback samples and
+therefore bid on different lots.
+
+Also removed `same_type_competition_index` (O(active_firms) per bid) from
+`commercial_bid_amount`, replacing it with a consumer-access-scaled expected
+revenue calculation that is O(1).
+
+#### Bug 3: `active_firm_ids` not maintained — O(total firms) iteration (`Types.jl`, `State.jl`, `Firms.jl`, `Entrepreneurship.jl`)
+
+`active_firms(state)` scanned the entire `state.firms` vector (including all
+dead firms) every call. Dead firms accumulate unboundedly as the simulation
+runs: by tick 400 with ~10,000 entries and ~9,000 exits, the vector held
+~10,000 entries but only ~500 were active. `active_firms` is called in every
+major per-tick loop, producing O(total_firms) cost that compounded to
+O(total_firms²) overall.
+
+**Fix:** added `active_firm_ids::Set{Int}` to `ModelState`. `active_firms`
+now iterates this set (O(active_firms)). The set is updated in `found_firm!`
+(add), `liquidate_firm!` (delete), and the failed-startup path in
+`finalize_pending_startup_firms!` (delete).
+
+#### Results after all three fixes (40×40, seed=12, 400 ticks)
+
+```
+tick=100  firms=292  emp=1350  com_vac=0.580  com_rent=1.77  elapsed=6.8s
+tick=200  firms=362  emp=1380  com_vac=0.334  com_rent=2.72  elapsed=22.5s
+tick=300  firms=437  emp=1462  com_vac=0.227  com_rent=3.39  elapsed=53.6s
+tick=400  firms=492  emp=1545  com_vac=0.193  com_rent=3.99  elapsed=105.0s
+
+Cohort analysis at tick 400:
+Age   1–5:   capital=2.0   com_units=1.0    cash=54
+Age  21–50:  capital=4.0   com_units=3.2    cash=302
+Age 101–200: capital=4.4   com_units=7.0    cash=1539
+Age 201–400: capital=10.6  com_units=13.1   cash=11082
+```
+
+Commercial expansion is now working. Firms grow from 1 to 13 commercial units
+as they age. Commercial vacancy fell from 0.89 to 0.19 and mean commercial
+rent rose from 1.01 (floor) to 3.99 over 400 ticks. The spatial competition
+conditions for a commercial rent gradient are now in place.
+
+Status: implemented, gradient validation pending.
+
+---
+
+### 2026-04-26: Performance — lot→firm index and worker exit mechanism
+
+#### Motivation
+
+Two compounding scalability problems emerged as the simulation grows:
+
+1. **O(workers × firms) consumption and job search.** `probabilistic_goods_choice`,
+   `affordable_sampled_goods_count`, and `best_job` all loop over `active_firms(state)`
+   (O(active_firms)) for every worker. At tick 700 with 1,101 firms and 10,495 workers,
+   profiling showed `consumption_phase!` taking 1,755 ms (89% of tick time). The inner
+   loop iterates all active firms to filter those with commercial units at sampled lots —
+   an O(N²) pattern.
+
+2. **Unbounded worker population.** `outside_entry_rate=3.0` adds ~3 workers per tick
+   with no corresponding exit mechanism. Workers accumulate until memory exhausts —
+   at tick 700, 10,495 workers with no ceiling. Most are perpetually unemployed and
+   contribute to the O(workers) outer loop without adding economic activity.
+
+#### Fix 1: Lot→firm index
+
+Build a `Dict{Int,Vector{Int}}` mapping each lot_id to the IDs of firms with
+commercial units there. Build once per phase (O(active_firms)), then flip the inner
+loop: iterate sampled lots → firms at those lots rather than all active firms →
+sampled lots. This reduces inner loop cost from O(active_firms) to
+O(sampled_lots × mean_firms_per_lot) — roughly 18× speedup on consumption at scale.
+
+Changes:
+- `Workers.jl`: `consumption_phase!` builds b2c lot→firm index; `worker_job_search!`
+  builds full lot→firm index. `probabilistic_goods_choice`, `affordable_sampled_goods_count`,
+  `best_job` accept `lot_firm_idx::Dict{Int,Vector{Int}}` and iterate sampled lots
+  rather than all active firms. `choose_good`, all `job_search!` dispatch variants,
+  and `apply_best_job!` pass the index through.
+
+#### Fix 2: Worker exit mechanism
+
+Add an `inactive_ticks` counter to each worker. Each tick that a worker is unemployed,
+the counter increments; employment resets it to zero. Workers who exceed
+`worker_exit_threshold` consecutive unemployed ticks are removed from the active set,
+vacating their home if housed. This bounds worker population to a steady state
+determined by entry rate and exit rate rather than allowing unbounded accumulation.
+
+Changes:
+- `Types.jl`: `inactive_ticks::Int` added to `Worker`; `active_worker_ids::Set{Int}`
+  added to `ModelState` (mirrors `active_firm_ids` pattern).
+- `Parameters.jl`: `worker_exit_threshold::Int = 20`.
+- `State.jl`: `draw_worker` initializes `inactive_ticks=0`; `init_state` initializes
+  `active_worker_ids`; `active_workers` helper added.
+- `Entrepreneurship.jl`: loops use `active_worker_ids`; `outside_entry!` adds to set.
+- `HumanCapital.jl`, `SpatialAccess.jl`, `Scheduler.jl`: main worker loops switch
+  to `active_worker_ids`.
+- `Workers.jl`: `consumption_phase!`, `worker_job_search!`, `worker_housing_search!`
+  iterate active workers; `worker_exit!` function added.
+- `Scheduler.jl`: `worker_exit!(state)` called after `worker_housing_search!`.
+- `Metrics.jl`, `MarketLogging.jl`: population counts use `active_worker_ids`.
+
+#### Note on threading
+
+The natural next step after these fixes is `Threads.@threads` on the per-worker
+phases (consumption, job search, housing search). This requires per-worker RNGs
+because `state.rng` (a single `MersenneTwister`) is not thread-safe. Deferred —
+implement when ready to add per-worker RNG seeding.
+
+#### Calibration note: worker_exit_threshold
+
+Initial value of 20 caused population collapse — workers received only ~4 job searches
+(at `job_review_prob=0.20`) before exiting, and the ~1640 initial unemployed workers all
+hit the threshold simultaneously around tick 20. Raised to 150, giving workers ~30 search
+attempts. Steady-state unemployed pool ≈ `entry_rate × threshold × (1 - emp_rate)`.
+
+#### Results (40×40, seed=12, 2000 initial workers, 120 firms, entry_rate=3.0)
+
+```
+tick=100   pop=2320  emp=982   firms=254  com_vac=0.679  com_rent=1.49  elapsed=3.6s
+tick=200   pop=2633  emp=854   firms=254  com_vac=0.519  com_rent=2.36  elapsed=5.6s
+tick=300   pop=2928  emp=845   firms=262  com_vac=0.499  com_rent=2.52  elapsed=8.3s
+tick=400   pop=3214  emp=890   firms=256  com_vac=0.509  com_rent=2.48  elapsed=11.4s
+tick=500   pop=3489  emp=906   firms=290  com_vac=0.482  com_rent=2.84  elapsed=15.1s
+tick=600   pop=3764  emp=1010  firms=262  com_vac=0.527  com_rent=2.38  elapsed=19.3s
+tick=700   pop=4048  emp=1088  firms=305  com_vac=0.506  com_rent=2.51  elapsed=23.9s
+tick=800   pop=4341  emp=1128  firms=310  com_vac=0.517  com_rent=2.25  elapsed=29.1s
+tick=900   pop=4585  emp=1135  firms=385  com_vac=0.473  com_rent=2.42  elapsed=35.0s
+tick=1000  pop=4743  emp=1187  firms=403  com_vac=0.465  com_rent=2.51  elapsed=41.8s
+```
+
+Performance: 1000 ticks in 41.8s (~34× faster than pre-index ~1440s/1000 ticks).
+Population growth rate is slowing (growth per 100 ticks: 313 → 313 → 295 → 286 → 275 → 275
+→ 284 → 293 → 244 → 158) as the exit mechanism absorbs the excess unemployed pool.
+Economy is stable with growing firm count and employment.
+
+Status: implemented.
+
+---
+
+### 2026-04-26: Split job search probability by employment state
+
+#### Motivation
+
+A single `job_review_prob=0.20` applied to both employed and unemployed workers
+gave unemployed workers only ~30 search attempts in the 150-tick exit window —
+too few to clear unemployment in a thin labor market, causing premature exit and
+economic contraction. The fix is economically straightforward: unemployed workers
+are urgently searching and should search every tick; employed workers are
+opportunistically checking for a wage premium and only need occasional review.
+
+#### Changes
+
+- `Parameters.jl`: replace `job_review_prob::Float64 = 0.20` with:
+  - `job_search_prob_unemployed::Float64 = 1.0` (search every tick while unemployed)
+  - `job_search_prob_employed::Float64 = 0.10` (occasional wage-premium search)
+- `Parameters.jl`: `worker_exit_threshold` remains 150 — with `prob=1.0` this now
+  means 150 genuine search attempts before exit. Threshold=50 caused a cold-start
+  collapse: 2000 initial workers, only 360 hired at startup, so 1640 mass-exit by
+  tick 50 wiping out consumers and cascading into firm failures. 150 gives enough
+  runway to survive the initial thin-market phase and boom/bust corrections.
+- `Workers.jl`: `worker_job_search!` selects probability by employment state.
+
+#### Results (40×40, seed=12, 2000 workers, 120 firms, entry_rate=3.0, threshold=150)
+
+```
+tick=100   pop=2299  emp=1684  firms=222  com_vac=0.753  com_rent=1.31  elapsed=4.0s
+tick=200   pop=2593  emp=941   firms=159  com_vac=0.747  com_rent=1.83  elapsed=6.2s
+tick=300   pop=2905  emp=846   firms=135  com_vac=0.711  com_rent=2.29  elapsed=8.4s
+tick=400   pop=3030  emp=865   firms=161  com_vac=0.671  com_rent=2.53  elapsed=10.9s
+tick=500   pop=2978  emp=888   firms=195  com_vac=0.635  com_rent=2.75  elapsed=13.7s
+tick=600   pop=2926  emp=848   firms=166  com_vac=0.666  com_rent=2.59  elapsed=16.5s
+tick=700   pop=2941  emp=921   firms=192  com_vac=0.638  com_rent=2.48  elapsed=19.5s
+tick=800   pop=2998  emp=755   firms=182  com_vac=0.648  com_rent=2.30  elapsed=22.5s
+tick=900   pop=2985  emp=798   firms=192  com_vac=0.639  com_rent=2.11  elapsed=25.8s
+tick=1000  pop=2925  emp=822   firms=186  com_vac=0.619  com_rent=2.23  elapsed=29.4s
+```
+
+Population stabilizes around 2900-3000. The spike to emp=1684 at tick 100 (prob=1.0 fills
+jobs fast) then correction to ~850 reflects early undercapitalized firms failing after
+startup cash depletes — the economy working correctly, not a bug. Firms then recover to
+~186 by tick 1000. Performance: 1000 ticks in 29.4s.
+
+Status: implemented.
+
+---
+
+### 2026-04-26: Feasibility search — wide parameter space survey
+
+#### Design
+
+432 runs: 4 productivity levels × 4 io_density levels × 3 entry rates × 3 founding
+probabilities × 3 seeds. Run to tick 1000 on 12 threads (~18 min wall time).
+Results written to `outputs/feasibility_search.csv`.
+
+Feasibility criteria (all must hold at tick 1000):
+- `firm_count >= 50`
+- `emp_rate >= 0.20`
+- `com_vac <= 0.85`
+- `com_rent > 1.1`
+
+Parameter grid:
+- `productivity`: 4.0, 5.5, 7.0, 9.0
+- `io_matrix_density`: 0.2, 0.4, 0.6, 0.8
+- `outside_entry_rate`: 1.0, 2.0, 4.0
+- `solo_found_prob`: 0.005, 0.010, 0.020
+- seeds: 12, 42, 77
+
+#### Findings
+
+**380 / 432 runs feasible (88%). All 52 failures have `found_prob=0.005`.**
+
+Feasibility rate by entry_rate × found_prob:
+```
+entry_rate   fp=0.005  fp=0.010  fp=0.020
+1.0             0.25      1.00      1.00
+2.0             0.67      1.00      1.00
+4.0             1.00      1.00      1.00
+```
+`found_prob=0.005` is the sole source of infeasibility. The firm entry rate is too low
+to build an adequate firm base before workers exhaust their exit threshold and leave.
+`found_prob=0.010` and above are unconditionally feasible across all tested parameter
+combinations. The interaction with `entry_rate` at `found_prob=0.005` reflects that
+higher worker inflow provides more founders and consumers, partially compensating for
+the low founding probability.
+
+**Lower io_density yields better employment; higher density yields higher commercial rent.**
+
+Mean emp_rate_1000 by productivity × io_density (feasible runs only):
+```
+prod \ density   0.2    0.4    0.6    0.8
+4.0             0.396  0.396  0.269  0.269
+5.5             0.409  0.409  0.277  0.271
+7.0             0.387  0.387  0.287  0.284
+9.0             0.376  0.376  0.292  0.288
+```
+
+Mean com_rent_1000 by productivity × io_density:
+```
+prod \ density   0.2    0.4    0.6    0.8
+4.0             1.81   1.81   1.70   1.71
+5.5             1.84   1.84   2.00   1.94
+7.0             1.88   1.88   2.20   2.02
+9.0             1.82   1.82   2.30   2.28
+```
+
+Higher io_density imposes more Leontief input constraints on B2C firms. When any
+required input type is undersupplied, B2C output is scaled down, reducing employment
+demand. At density 0.6-0.8, employment rates drop to ~28% vs ~40% at density 0.2-0.4.
+The tradeoff: denser I-O networks generate higher commercial rents (through inter-firm
+agglomeration), but at the cost of utilization.
+
+Mean firm count by entry_rate × found_prob:
+```
+entry_rate   fp=0.005  fp=0.010  fp=0.020
+1.0              55        81       119
+2.0              64       110       167
+4.0              83       169       274
+```
+
+**Known confound: io_matrix_seed=0 is fixed across all runs.**
+
+The io_matrix is generated from a dedicated RNG seeded by `io_matrix_seed` (default 0),
+independent of the simulation seed. This means all 432 runs use the same link pattern.
+The identical results for density=0.2 and density=0.4 across all metrics confirm this:
+the 8 buyer-supplier draws from MersenneTwister(0) all fall either below 0.2 or above
+0.4, producing identical binary link matrices at both density levels. The effective
+density dimension sampled is {low, 0.6, 0.8} rather than {0.2, 0.4, 0.6, 0.8}.
+
+**Employment rate is structurally low (~33%) across the entire feasible space.**
+
+Even at the best configurations, employment rate peaks around 40%. The model has
+persistent excess labor supply: `outside_entry_rate` continuously adds workers and
+`worker_exit_threshold=150` gives each a long window before exit. The firm base
+(determined by founding probability and entry rate) cannot absorb labor fast enough
+at these parameter levels.
+
+#### Recommendations for next session
+
+1. **Drop `found_prob=0.005`** from future parameter sweeps — infeasible in most
+   configurations. Minimum viable value is `found_prob=0.010`.
+
+2. **Fix the io_matrix_seed confound** before interpreting density effects. Vary
+   `io_matrix_seed` per config (e.g., set it equal to the simulation seed), or use
+   a known fixed matrix and vary coefficients directly. Without this fix, density
+   0.2 and 0.4 are aliases of each other.
+
+3. **Trade-off to calibrate**: low density (~0.2) for employment health vs high
+   density (~0.6-0.8) for commercial rent gradient strength. At current calibration,
+   density 0.6-0.8 with productivity 7.0-9.0 gives the best commercial rents (2.2-2.3)
+   but lowest employment (28%). Decision depends on whether the research priority is
+   employment realism or spatial rent gradient emergence.
+
+4. **Add `coalition_found_prob` to the next sweep.** Solo founding alone may be
+   insufficient to sustain the firm base at all parameter levels. Coalition founding
+   (which pools savings) is a separate lever on firm entry that wasn't varied here.
+
+5. **Revisit `outside_entry_rate` vs `worker_exit_threshold`** as a joint calibration
+   problem. The steady-state unemployed pool ≈ `entry_rate × threshold × (1 - emp_rate)`.
+   At current values (3.0 × 150 × 0.67 ≈ 300), the pool is large. Lowering the
+   threshold or entry rate reduces the pool, which may improve employment rates but
+   risks cold-start collapse. Next sweep should include threshold as a dimension.
+
+Status: complete. Raw results in `outputs/feasibility_search.csv`.

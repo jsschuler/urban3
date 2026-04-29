@@ -1,12 +1,20 @@
+function has_active_ownership(state::ModelState, w::Worker)
+    for firm_id in keys(w.ownership_shares)
+        firm_id > length(state.firms) && continue
+        state.firms[firm_id].active && return true
+    end
+    return false
+end
+
 function entrepreneurship_phase!(state::ModelState)
-    for w in state.workers
-        isempty(w.ownership_shares) || continue
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
         if w.savings >= state.params.solo_startup_savings && rand(state.rng) < state.params.solo_found_prob
             found_firm!(state, [w.id]; startup_capital=state.params.solo_startup_savings)
         end
     end
     if rand(state.rng) < state.params.coalition_found_prob
-        candidates = [w for w in state.workers if isempty(w.ownership_shares) && w.savings > 0]
+        candidates = [state.workers[wid] for wid in state.active_worker_ids if state.workers[wid].savings > 0]
         sort!(candidates; by=w -> w.savings, rev=true)
         n = min(length(candidates), rand(state.rng, state.params.coalition_size_min:state.params.coalition_size_max))
         if n >= state.params.coalition_size_min && sum(w.savings for w in candidates[1:n]) >= state.params.coalition_startup_savings
@@ -34,8 +42,10 @@ function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capita
         state.params.firm_types[ftype].initial_goods_price_min +
             rand(state.rng) * (state.params.firm_types[ftype].initial_goods_price_max - state.params.firm_types[ftype].initial_goods_price_min),
         0, 0, Int[], Float64[], true, true,
+        state.tick,
         Dict{Int,Int}(), 0.0, initial_cash)
     push!(state.firms, firm)
+    push!(state.active_firm_ids, firm_id)
     for (id, share) in shares
         state.workers[id].ownership_shares[firm_id] = share
     end
@@ -48,6 +58,7 @@ function outside_entry!(state::ModelState)
     for _ in 1:n
         id = length(state.workers) + 1
         push!(state.workers, draw_worker(id, state.params, state.rng))
+        push!(state.active_worker_ids, id)
         state.events.outside_entries += 1
     end
 end

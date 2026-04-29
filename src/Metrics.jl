@@ -1,13 +1,13 @@
 function metrics_snapshot(state::ModelState)
-    workers = length(state.workers)
-    employed = count(w -> !isnothing(w.employer_id), state.workers)
-    housed = count(w -> !isnothing(w.dwelling_lot_id), state.workers)
+    workers = length(state.active_worker_ids)
+    employed = count(wid -> !isnothing(state.workers[wid].employer_id), state.active_worker_ids)
+    housed = count(wid -> !isnothing(state.workers[wid].dwelling_lot_id), state.active_worker_ids)
     active = active_firms(state)
     res_units = sum(l.residential_units for l in state.lots)
     com_units = sum(l.commercial_units for l in state.lots)
     occ_res = sum(l.occupied_residential for l in state.lots)
     occ_com = sum(l.occupied_commercial for l in state.lots)
-    wages = [w.current_wage for w in state.workers if !isnothing(w.employer_id)]
+    wages = [state.workers[wid].current_wage for wid in state.active_worker_ids if !isnothing(state.workers[wid].employer_id)]
     rents_r = [l.residential_rent for l in state.lots]
     rents_c = [l.commercial_rent for l in state.lots]
     prices = [f.goods_price for f in active if is_b2c(state, f)]
@@ -46,7 +46,8 @@ end
 
 function commute_distances(state::ModelState)
     out = Float64[]
-    for w in state.workers
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
         isnothing(w.dwelling_lot_id) && continue
         isnothing(w.employer_id) && continue
         lid = nearest_firm_lot(state.firms[w.employer_id], w.dwelling_lot_id, state)

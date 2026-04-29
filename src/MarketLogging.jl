@@ -2,9 +2,9 @@ function record_market_snapshot!(state::ModelState)
     state.params.enable_market_logging || return
 
     firms = active_firms(state)
-    population = length(state.workers)
-    employed = count(w -> !isnothing(w.employer_id), state.workers)
-    housed = count(w -> !isnothing(w.dwelling_lot_id), state.workers)
+    population = length(state.active_worker_ids)
+    employed = count(wid -> !isnothing(state.workers[wid].employer_id), state.active_worker_ids)
+    housed = count(wid -> !isnothing(state.workers[wid].dwelling_lot_id), state.active_worker_ids)
     residential_units = sum(l.residential_units for l in state.lots)
     vacant_residential_units = sum(vacant_residential(l) for l in state.lots)
     commercial_units = sum(l.commercial_units for l in state.lots)
@@ -15,7 +15,7 @@ function record_market_snapshot!(state::ModelState)
     realized_sales = sum(f.realized_sales_this_tick for f in firms; init=0)
     unsold_output = sum(max(0, f.committed_output - f.realized_sales_this_tick) for f in firms; init=0)
     sold_out_firms = count(f -> f.committed_output > 0 && f.realized_sales_this_tick >= f.committed_output, firms)
-    wages = [w.current_wage for w in state.workers if !isnothing(w.employer_id)]
+    wages = [state.workers[wid].current_wage for wid in state.active_worker_ids if !isnothing(state.workers[wid].employer_id)]
     residential_rents = [l.residential_rent for l in state.lots]
     commercial_rents = [l.commercial_rent for l in state.lots]
     goods_prices = [f.goods_price for f in firms]

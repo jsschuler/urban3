@@ -71,6 +71,7 @@ end
 
 function commit_intermediate_output!(state::ModelState)
     for f in active_firms(state)
+        f.founded_tick == state.tick && continue
         is_b2c(state, f) && continue
         isempty(required_input_types(state, f)) || continue   # skip tiers with input requirements
         f.committed_output = production_capacity(state, f, state.params)
@@ -80,6 +81,7 @@ end
 
 function commit_b2b_with_inputs!(state::ModelState)
     for f in active_firms(state)
+        f.founded_tick == state.tick && continue
         is_b2c(state, f) && continue
         isempty(required_input_types(state, f)) && continue   # skip tier 1 (no inputs)
         cap = production_capacity(state, f, state.params)
@@ -242,6 +244,7 @@ end
 
 function commit_production!(state::ModelState)
     for f in active_firms(state)
+        f.founded_tick == state.tick && continue
         is_b2b(state, f) && continue  # already committed in commit_intermediate_output!
         cap = production_capacity(state, f, state.params)
         scale = leontief_input_scale(state, f)
@@ -270,6 +273,8 @@ end
 
 function firm_contraction_expansion!(state::ModelState)
     for f in copy(active_firms(state))
+        # Startup grace: do not liquidate or force contractions on birth tick.
+        f.founded_tick == state.tick && continue
         if f.cash < 0
             liquidate_firm!(state, f)
             continue
@@ -305,7 +310,7 @@ function firm_contraction_expansion!(state::ModelState)
                 end
             end
         end
-        if length(f.worker_ids) == 0 || f.capital_units == 0
+        if f.capital_units == 0
             liquidate_firm!(state, f)
         end
     end
@@ -321,123 +326,33 @@ function liquidate_firm!(state::ModelState, f::Firm)
     end
     empty!(f.commercial_units_by_lot)
     f.active = false
+    delete!(state.active_firm_ids, f.id)
     state.events.firm_exits += 1
 end
 
-function best_vacant_commercial_candidate(state::ModelState, f::Firm, candidates::Vector{Int})
-    best_lot_id = nothing
-    vacant_count = 0
-    for lid in candidates
-        lot = state.lots[lid]
-        vacant_commercial(lot) <= 0 && continue
-        vacant_count += 1
-        if isnothing(best_lot_id)
-            best_lot_id = lid
-            continue
-        end
-        current = state.lots[best_lot_id]
-        if commercial_location_score(state, f, lid) > commercial_location_score(state, f, best_lot_id)
-            best_lot_id = lid
-        elseif commercial_location_score(state, f, lid) == commercial_location_score(state, f, best_lot_id) &&
-            get(f.commercial_units_by_lot, lid, 0) > get(f.commercial_units_by_lot, best_lot_id, 0)
-            best_lot_id = lid
-        end
-    end
-    return best_lot_id, vacant_count
-end
-
-function commercial_location_gross_value(state::ModelState, f::Firm, lot_id::Int)
-    consolidation_bonus = get(f.commercial_units_by_lot, lot_id, 0)
+function commercial_location_score_fast(state::ModelState, f::Firm, lot_id::Int)
     tier = firm_supply_tier(state, f)
     max_tier = max_supply_tier(state)
-    consumer_term = if tier == max_tier
-        state.params.firm_consumer_access_weight * state.consumer_access_by_lot[lot_id]
-    else
-        state.params.firm_b2b_consumer_access_weight * state.consumer_access_by_lot[lot_id]
-    end
-    downstream_term = tier < max_tier ?
-        state.params.firm_b2b_downstream_access_weight * firm_tier_access_at_lot(state, lot_id, tier + 1) :
-        0.0
-    upstream_term = tier > 1 ?
-        state.params.firm_b2b_upstream_access_weight * firm_tier_access_at_lot(state, lot_id, tier - 1) :
-        0.0
-    return consumer_term +
-        downstream_term +
-        upstream_term +
+    access = state.consumer_access_by_lot[lot_id]
+    w = tier == max_tier ? state.params.firm_consumer_access_weight : state.params.firm_b2b_consumer_access_weight
+    return w * access +
         state.params.firm_job_access_weight * state.job_access_by_lot[lot_id] +
-        state.params.firm_employee_commute_weight * (-mean_employee_commute_to_lot(state, f, lot_id)) +
-        consolidation_bonus
+        get(f.commercial_units_by_lot, lot_id, 0) -
+        state.lots[lot_id].commercial_rent
 end
 
-function firm_tier_access_at_lot(state::ModelState, lot_id::Int, target_tier::Int)
-    radius = state.params.consumer_access_radius
-    decay = state.params.access_distance_decay
-    destination = state.lots[lot_id]
-    total = 0.0
-    for other in active_firms(state)
-        firm_supply_tier(state, other) == target_tier || continue
-        for (other_lot_id, units) in other.commercial_units_by_lot
-            d = taxicab(destination, state.lots[other_lot_id])
-            total += units * access_weight(d, radius, decay)
-        end
-    end
-    return total
-end
-
-function mean_employee_commute_to_lot(state::ModelState, f::Firm, lot_id::Int)
-    total = 0.0
-    count = 0
-    destination = state.lots[lot_id]
-    for wid in f.worker_ids
-        worker = state.workers[wid]
-        isnothing(worker.dwelling_lot_id) && continue
-        total += taxicab(state.lots[worker.dwelling_lot_id], destination)
-        count += 1
-    end
-    count == 0 && return 0.0
-    return total / count
-end
-
-function commercial_location_score(state::ModelState, f::Firm, lot_id::Int)
-    lot = state.lots[lot_id]
-    return commercial_location_gross_value(state, f, lot_id) - lot.commercial_rent
-end
-
-function cheapest_global_vacant_commercial_lot(state::ModelState, f::Firm)
+function best_vacant_candidate_fast(state::ModelState, f::Firm, candidates::Vector{Int})
     best_lot_id = nothing
-    for lot in state.lots
-        vacant_commercial(lot) <= 0 && continue
-        if isnothing(best_lot_id)
-            best_lot_id = lot.id
-            continue
-        end
-        current = state.lots[best_lot_id]
-        if commercial_location_score(state, f, lot.id) > commercial_location_score(state, f, best_lot_id)
-            best_lot_id = lot.id
-        elseif commercial_location_score(state, f, lot.id) == commercial_location_score(state, f, best_lot_id) &&
-            get(f.commercial_units_by_lot, lot.id, 0) > get(f.commercial_units_by_lot, best_lot_id, 0)
-            best_lot_id = lot.id
+    best_score = -Inf
+    for lid in candidates
+        vacant_commercial(state.lots[lid]) <= 0 && continue
+        score = commercial_location_score_fast(state, f, lid)
+        if score > best_score
+            best_score = score
+            best_lot_id = lid
         end
     end
     return best_lot_id
-end
-
-function commercial_search_satisficed(
-    state::ModelState,
-    f::Firm,
-    anchor::Union{Nothing,Int},
-    candidates::Vector{Int},
-)
-    best_lot_id, vacant_count = best_vacant_commercial_candidate(state, f, candidates)
-    isnothing(best_lot_id) && return false
-    vacant_count < state.params.commercial_search_target_vacant_candidates && return false
-    isnothing(anchor) && return true
-    anchor_rent = state.lots[anchor].commercial_rent
-    acceptable_rent = max(
-        state.params.min_commercial_rent,
-        anchor_rent * state.params.commercial_search_acceptance_multiplier,
-    )
-    return state.lots[best_lot_id].commercial_rent <= acceptable_rent
 end
 
 function commercial_space_search!(state::ModelState, f::Firm)
@@ -449,45 +364,26 @@ function commercial_space_search!(state::ModelState, f::Firm)
         domain=:commercial_space,
         actor_kind=:firm,
         actor_id=f.id,
-        accept=(lots, stage) -> commercial_search_satisficed(state, f, anchor, lots),
+        accept=(lots, stage) -> any(vacant_commercial(state.lots[lid]) > 0 for lid in lots),
     )
-    chosen_lot_id, _ = best_vacant_commercial_candidate(state, f, candidates)
-    evaluated_candidates = candidates
+    chosen_lot_id = best_vacant_candidate_fast(state, f, candidates)
 
-    if state.params.commercial_search_global_rescue
-        rescue_lot_id = cheapest_global_vacant_commercial_lot(state, f)
-        if !isnothing(rescue_lot_id)
-            force_rescue = isnothing(chosen_lot_id)
-            if !force_rescue
-                chosen_score = commercial_location_score(state, f, chosen_lot_id)
-                rescue_score = commercial_location_score(state, f, rescue_lot_id)
-                score_gain = rescue_score - chosen_score
-                score_loss = chosen_score - rescue_score
-                rent_gap = state.lots[chosen_lot_id].commercial_rent - state.lots[rescue_lot_id].commercial_rent
-                !commercial_search_satisficed(state, f, anchor, candidates) && (force_rescue = true)
-                score_gain >= state.params.commercial_search_rescue_min_score_gain && (force_rescue = true)
-                if rent_gap >= state.params.commercial_search_rescue_min_rent_gap &&
-                    score_loss <= state.params.commercial_search_rescue_max_score_loss
-                    force_rescue = true
-                end
-            end
-            if force_rescue
-                chosen_lot_id = rescue_lot_id
-                evaluated_candidates = collect(eachindex(state.lots))
-            end
-        end
+    if isnothing(chosen_lot_id)
+        n = min(state.params.commercial_global_fallback_samples, length(state.lots))
+        fallback = randperm(state.rng, length(state.lots))[1:n]
+        chosen_lot_id = best_vacant_candidate_fast(state, f, fallback)
     end
 
     if !isnothing(chosen_lot_id)
         bid = commercial_bid_amount(state, f, chosen_lot_id)
         push!(state.commercial_bid_buffer, CommercialBidProposal(f.id, chosen_lot_id, bid))
-        log_commercial_space_search!(state, f, evaluated_candidates, chosen_lot_id)
-        log_commercial_search_diagnostic!(state, f, anchor, evaluated_candidates, chosen_lot_id)
+        log_commercial_space_search!(state, f, candidates, chosen_lot_id)
+        log_commercial_search_diagnostic!(state, f, anchor, candidates, chosen_lot_id)
         return true
     end
 
-    log_commercial_space_search!(state, f, evaluated_candidates, nothing)
-    log_commercial_search_diagnostic!(state, f, anchor, evaluated_candidates, nothing)
+    log_commercial_space_search!(state, f, candidates, nothing)
+    log_commercial_search_diagnostic!(state, f, anchor, candidates, nothing)
     return false
 end
 
@@ -509,47 +405,14 @@ function recent_mean_sales(f::Firm, lookback::Int)
     return mean(window)
 end
 
-function same_type_competition_index(state::ModelState, f::Firm, lot_id::Int)
-    radius = state.params.consumer_access_radius
-    decay = state.params.access_distance_decay
-    destination = state.lots[lot_id]
-    total = 0.0
-    for other in active_firms(state)
-        other.id == f.id && continue
-        other.firm_type != f.firm_type && continue
-        for (other_lot_id, units) in other.commercial_units_by_lot
-            d = taxicab(destination, state.lots[other_lot_id])
-            total += units * access_weight(d, radius, decay)
-        end
-    end
-    return total
-end
-
-function expected_site_sales_units(state::ModelState, f::Firm, lot_id::Int)
-    candidate_access = state.consumer_access_by_lot[lot_id]
-    anchor_access = firm_anchor_consumer_access(state, f)
-    competition = 1.0 + state.params.commercial_bid_same_type_competition_weight *
-        same_type_competition_index(state, f, lot_id)
-
-    if isempty(f.realized_sales_history)
-        mean_access = mean(state.consumer_access_by_lot)
-        base_sales = state.params.commercial_bid_startup_expected_sales
-        access_scale = (candidate_access + 1.0) / (mean_access + 1.0)
-        return max(1.0, base_sales * access_scale / competition)
-    end
-
-    base_sales = max(1.0, recent_mean_sales(f, state.params.commercial_bid_recent_sales_lookback))
-    mean_access = mean(state.consumer_access_by_lot)
-    access_scale = (candidate_access + 1.0) / (mean_access + 1.0)
-    return max(1.0, base_sales * access_scale / competition)
-end
-
-function expected_site_revenue(state::ModelState, f::Firm, lot_id::Int)
-    return expected_site_sales_units(state, f, lot_id) * f.goods_price
-end
-
 function commercial_bid_amount(state::ModelState, f::Firm, lot_id::Int)
-    raw_bid = state.params.commercial_bid_share * expected_site_revenue(state, f, lot_id)
+    access = state.consumer_access_by_lot[lot_id]
+    mean_access = mean(state.consumer_access_by_lot)
+    base_sales = isempty(f.realized_sales_history) ?
+        state.params.commercial_bid_startup_expected_sales :
+        max(1.0, recent_mean_sales(f, state.params.commercial_bid_recent_sales_lookback))
+    access_scale = (access + 1.0) / (mean_access + 1.0)
+    raw_bid = state.params.commercial_bid_share * base_sales * access_scale * f.goods_price
     return clamp(raw_bid, state.params.min_commercial_rent, state.params.commercial_bid_cap)
 end
 
@@ -558,13 +421,15 @@ function finalize_pending_startup_firms!(state::ModelState)
         !f.active && continue
         !f.startup_pending && continue
         if isempty(f.commercial_units_by_lot)
-            rescue_lot_id = cheapest_global_vacant_commercial_lot(state, f)
+            n = min(state.params.commercial_global_fallback_samples, length(state.lots))
+            fallback = randperm(state.rng, length(state.lots))[1:n]
+            rescue_lot_id = best_vacant_candidate_fast(state, f, fallback)
             if isnothing(rescue_lot_id)
                 f.active = false
                 f.startup_pending = false
+                delete!(state.active_firm_ids, f.id)
                 continue
             end
-
             bid = commercial_bid_amount(state, f, rescue_lot_id)
             lot = state.lots[rescue_lot_id]
             lot.occupied_commercial += 1
@@ -574,7 +439,6 @@ function finalize_pending_startup_firms!(state::ModelState)
                     state.params.commercial_rent_bid_adjustment_rate * bid,
             )
             f.commercial_units_by_lot[rescue_lot_id] = get(f.commercial_units_by_lot, rescue_lot_id, 0) + 1
-        else
         end
         f.startup_pending = false
         state.events.firm_entries += 1
