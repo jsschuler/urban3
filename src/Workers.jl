@@ -1,3 +1,28 @@
+function labor_vacancies(state::ModelState, f::Firm)
+    if length(f.worker_ids) < state.params.initial_hire_per_firm
+        return state.params.initial_hire_per_firm - length(f.worker_ids)
+    end
+    return max(0, labor_target_for_wage_review(state, f) - length(f.worker_ids))
+end
+
+function immigration_phase!(state::ModelState)
+    for f in active_firms(state)
+        vac = labor_vacancies(state, f)
+        vac <= 0 && continue
+        for _ in 1:vac
+            new_id = length(state.workers) + 1
+            w = draw_worker(new_id, state.params, state.rng)
+            push!(state.workers, w)
+            if hire_worker!(state, w, f)
+                push!(state.active_worker_ids, new_id)
+                state.events.immigrants += 1
+            else
+                pop!(state.workers)
+            end
+        end
+    end
+end
+
 function worker_income(w::Worker, params::ModelParams)
     isnothing(w.employer_id) ? params.outside_wage : w.current_wage
 end
@@ -56,6 +81,10 @@ function choose_good(w::Worker, state::ModelState, remaining::Dict{Int,Int}, bud
         accept=(lots, stage) -> affordable_sampled_goods_count(w, state, remaining, budget, lots, lot_firm_idx) >=
             state.params.goods_search_target_affordable_candidates,
     )
+    # Guarantee all active B2C firm lots are visible so the goods market clears
+    # even at low firm counts where spatial sampling alone would miss most firms.
+    all_b2c_lots = collect(keys(lot_firm_idx))
+    sampled_lots = isempty(all_b2c_lots) ? sampled_lots : unique(vcat(sampled_lots, all_b2c_lots))
     choice_id, choice_score, delivered_cost = probabilistic_goods_choice(w, state, remaining, budget, sampled_lots, lot_firm_idx)
     log_goods_search_diagnostic!(state, w, origin, budget, sampled_lots, choice_id, choice_score)
     return choice_id, delivered_cost
@@ -213,7 +242,18 @@ function worker_job_search!(state::ModelState)
 end
 
 function job_search!(::Unemployed, ::Unhoused, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
-    return apply_best_job!(w, state, lot_firm_idx)
+    # No spatial anchor: evaluate all active firms directly rather than sampling blind
+    best_id = nothing
+    best_wage = -Inf
+    for fid in state.active_firm_ids
+        f = state.firms[fid]
+        isempty(f.commercial_units_by_lot) && continue
+        f.posted_wage > best_wage || continue
+        best_wage = f.posted_wage
+        best_id = fid
+    end
+    isnothing(best_id) && return false
+    return hire_worker!(state, w, state.firms[best_id])
 end
 
 function job_search!(::Unemployed, ::Housed, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
@@ -264,7 +304,6 @@ function best_job(w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{In
             fid in seen_firms && continue
             push!(seen_firms, fid)
             f = state.firms[fid]
-            length(f.worker_ids) >= state.params.max_workers_per_firm && continue
             nearest = nearest_firm_lot(f, origin, state)
             isnothing(nearest) && continue
             nearest in sampled_set || continue

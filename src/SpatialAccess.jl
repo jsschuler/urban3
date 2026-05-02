@@ -40,10 +40,9 @@ end
 function refresh_job_access!(state::ModelState)
     vacancy_by_lot = zeros(Float64, length(state.lots))
     for f in active_firms(state)
-        vacancies = max(0, state.params.max_workers_per_firm - length(f.worker_ids))
-        vacancies <= 0 && continue
-        for (lid, units) in f.commercial_units_by_lot
-            vacancy_by_lot[lid] += vacancies * max(units, 1)
+        weight = length(f.worker_ids) + 1
+        for (lid, ticks_list) in f.commercial_units_by_lot
+            vacancy_by_lot[lid] += weight * max(length(ticks_list), 1)
         end
     end
     scatter_access!(state.job_access_by_lot, vacancy_by_lot,

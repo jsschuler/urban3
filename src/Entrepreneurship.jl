@@ -38,7 +38,9 @@ function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capita
     firm = Firm(firm_id, ftype, copy(founder_ids), shares,
         state.params.base_wage * (0.9 + 0.2 * rand(state.rng)),
         Int[], Dict{Int,Float64}(),
-        2, 1, Dict{Int,Int}(),
+        2, fill(state.tick, 2),
+        1, [state.tick],
+        Dict{Int,Vector{Int}}(), Dict{Int,Vector{Float64}}(), 0,
         state.params.firm_types[ftype].initial_goods_price_min +
             rand(state.rng) * (state.params.firm_types[ftype].initial_goods_price_max - state.params.firm_types[ftype].initial_goods_price_min),
         0, 0, Int[], Float64[], true, true,
@@ -53,12 +55,31 @@ function found_firm!(state::ModelState, founder_ids::Vector{Int}; startup_capita
     return firm
 end
 
-function outside_entry!(state::ModelState)
-    n = poisson(state.rng, state.params.outside_entry_rate)
-    for _ in 1:n
-        id = length(state.workers) + 1
-        push!(state.workers, draw_worker(id, state.params, state.rng))
-        push!(state.active_worker_ids, id)
-        state.events.outside_entries += 1
+function investor_found_firm!(state::ModelState, ftype::Int)
+    firm_id = length(state.firms) + 1
+    ft = state.params.firm_types[ftype]
+    firm = Firm(firm_id, ftype, Int[], Dict{Int,Float64}(),
+        state.params.base_wage * (0.9 + 0.2 * rand(state.rng)),
+        Int[], Dict{Int,Float64}(),
+        2, fill(state.tick, 2),
+        1, [state.tick],
+        Dict{Int,Vector{Int}}(), Dict{Int,Vector{Float64}}(), 0,
+        ft.initial_goods_price_min + rand(state.rng) * (ft.initial_goods_price_max - ft.initial_goods_price_min),
+        0, 0, Int[], Float64[], true, true,
+        state.tick,
+        Dict{Int,Int}(), 0.0, state.params.investor_initial_firm_cash)
+    push!(state.firms, firm)
+    push!(state.active_firm_ids, firm_id)
+    commercial_space_search!(state, firm)
+    return firm
+end
+
+function investor_phase!(state::ModelState)
+    for ftype in 1:state.params.firm_type_count
+        fid = get(state.investor_firm_by_type, ftype, 0)
+        if fid == 0 || !state.firms[fid].active
+            f = investor_found_firm!(state, ftype)
+            !isnothing(f) && (state.investor_firm_by_type[ftype] = f.id)
+        end
     end
 end

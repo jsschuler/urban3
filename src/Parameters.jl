@@ -15,8 +15,8 @@ Base.@kwdef struct FirmTypeParams
     labor_elasticity::Float64 = 0.45
     capital_elasticity::Float64 = 0.30
     space_elasticity::Float64 = 0.25
-    process_price::Float64 = 60.0
-    capital_price::Float64 = 25.0
+    capital_rental_rate::Float64 = 0.25
+    process_rental_rate::Float64 = 0.60
     supply_tier::Int = 3   # 1=upstream B2B (no inputs), 2=midstream B2B, 3=final B2C (sells to consumers)
     initial_goods_price_min::Float64 = 4.0
     initial_goods_price_max::Float64 = 6.0
@@ -25,8 +25,6 @@ end
 Base.@kwdef mutable struct ModelParams
     width::Int = 24
     height::Int = 24
-    initial_workers::Int = 160
-    initial_firms::Int = 16
     initial_residential_units_per_lot::Int = 1
     initial_commercial_units_per_lot::Int = 1
     initial_residential_rent_min::Float64 = 1.8
@@ -71,8 +69,6 @@ Base.@kwdef mutable struct ModelParams
     firm_job_access_weight::Float64 = 0.03
     firm_employee_commute_weight::Float64 = 0.25
     commercial_bid_share::Float64 = 0.12
-    commercial_bid_cap::Float64 = 250.0
-    commercial_rent_bid_adjustment_rate::Float64 = 0.30
     commercial_bid_recent_sales_lookback::Int = 12
     commercial_bid_startup_expected_sales::Float64 = 6.0
     commercial_bid_same_type_competition_weight::Float64 = 0.75
@@ -105,10 +101,9 @@ Base.@kwdef mutable struct ModelParams
     wage_review_prob::Float64 = 0.20
     contraction_review_prob::Float64 = 0.08
     expansion_review_prob::Float64 = 0.12
+    sold_out_expansion_premium::Float64 = 0.50
     modal_sales_lookback::Int = 12
     site_consolidation_k::Int = 3
-    max_workers_per_firm::Int = 18
-
     base_wage::Float64 = 10.0
     initial_savings_mean::Float64 = 35.0
     initial_savings_sd::Float64 = 10.0
@@ -140,7 +135,7 @@ Base.@kwdef mutable struct ModelParams
     input_price_cut_rate::Float64 = 0.04
     input_travel_cost_per_block::Float64 = 0.20
     input_search::SearchParams = SearchParams(poisson_intensity=5.0, radius=8, global_samples=16)
-    outside_input_prices::Vector{Float64} = [3.5, 5.0]
+    outside_input_prices::Vector{Float64} = [8.0, 12.0]
     outside_input_distance::Float64 = 5.0
     outside_wage::Float64 = 8.0
 
@@ -150,13 +145,17 @@ Base.@kwdef mutable struct ModelParams
     coalition_startup_savings::Float64 = 180.0
     coalition_size_min::Int = 2
     coalition_size_max::Int = 5
+    commercial_lease_term::Int = 50
+    capital_lease_term::Int = 100
+    process_lease_term::Int = 100
+    shell_dissolution_ticks::Int = 20
     initial_firm_cash::Float64 = 15_000.0
+    investor_initial_firm_cash::Float64 = 50_000.0
     initial_hire_per_firm::Int = 3
     startup_production_target::Int = 2
     min_hire_cash_ticks::Int = 5
 
-    outside_entry_rate::Float64 = 3.0
-    worker_exit_threshold::Int = 150
+    worker_exit_threshold::Int = 75
     blender_update_every::Int = 5
 
     enable_decision_logging::Bool = true

@@ -9,7 +9,7 @@ function metrics_snapshot(state::ModelState)
     occ_com = sum(l.occupied_commercial for l in state.lots)
     wages = [state.workers[wid].current_wage for wid in state.active_worker_ids if !isnothing(state.workers[wid].employer_id)]
     rents_r = [l.residential_rent for l in state.lots]
-    rents_c = [l.commercial_rent for l in state.lots]
+    rents_c = [l.commercial_rent for l in state.lots if l.commercial_units > 0 && l.occupied_commercial > 0]
     prices = [f.goods_price for f in active if is_b2c(state, f)]
     commutes = commute_distances(state)
     Dict(
@@ -24,6 +24,7 @@ function metrics_snapshot(state::ModelState)
         "firm_exits" => state.events.firm_exits,
         "hires" => state.events.hires,
         "layoffs" => state.events.layoffs,
+        "immigrants" => state.events.immigrants,
         "residential_units" => res_units,
         "commercial_units" => com_units,
         "residential_vacancy_rate" => res_units == 0 ? 0.0 : (res_units - occ_res) / res_units,

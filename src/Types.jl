@@ -46,8 +46,12 @@ mutable struct Firm
     worker_ids::Vector{Int}
     current_worker_wages::Dict{Int,Float64}
     capital_units::Int
+    capital_lease_ticks::Vector{Int}          # acquisition tick per capital unit
     process_count::Int
-    commercial_units_by_lot::Dict{Int,Int}
+    process_lease_ticks::Vector{Int}          # acquisition tick per process
+    commercial_units_by_lot::Dict{Int,Vector{Int}}     # lot_id => acquisition ticks per unit
+    commercial_rent_paid_by_lot::Dict{Int,Vector{Float64}}  # lot_id => per-unit rent paid
+    shell_ticks::Int                          # ticks spent as shell (spaceless, all leases expired)
     goods_price::Float64
     committed_output::Int
     realized_sales_this_tick::Int
@@ -56,9 +60,15 @@ mutable struct Firm
     active::Bool
     startup_pending::Bool
     founded_tick::Int
-    inputs_acquired::Dict{Int,Int}   # b2b firm_type => units acquired this tick
-    input_cost_this_tick::Float64    # total input spending this tick
-    cash::Float64                    # current cash balance; insolvency (< 0) triggers liquidation
+    inputs_acquired::Dict{Int,Int}
+    input_cost_this_tick::Float64
+    cash::Float64
+end
+
+struct RofrEntry
+    firm_id::Int
+    lot_id::Int
+    n_units::Int
 end
 
 mutable struct TickEvents
@@ -69,7 +79,7 @@ mutable struct TickEvents
     residential_units_added::Int
     commercial_units_added::Int
     conversions::Int
-    outside_entries::Int
+    immigrants::Int
 end
 
 mutable struct DecisionRecord
@@ -207,7 +217,9 @@ mutable struct ModelState
     consumer_access_by_lot::Vector{Float64}
     job_access_by_lot::Vector{Float64}
     commercial_bid_buffer::Vector{CommercialBidProposal}
-    io_matrix::Matrix{Float64}   # io_matrix[buyer_type, supplier_type] = units per output unit
+    rofr_buffer::Vector{RofrEntry}
+    io_matrix::Matrix{Float64}
+    investor_firm_by_type::Dict{Int,Int}
 end
 
 employment_state(w::Worker) = isnothing(w.employer_id) ? Unemployed() : Employed()

@@ -56,9 +56,7 @@ function init_state(params::ModelParams=ModelParams())
                 (params.initial_commercial_rent_max - params.initial_commercial_rent_min) * rand(rng)))
         id += 1
     end
-    workers = [draw_worker(i, params, rng) for i in 1:params.initial_workers]
-    active_worker_ids = Set{Int}(1:params.initial_workers)
-    state = ModelState(0, params, rng, lots, workers, Firm[], Set{Int}(), active_worker_ids, reset_events!(),
+    state = ModelState(0, params, rng, lots, Worker[], Firm[], Set{Int}(), Set{Int}(), reset_events!(),
         init_decision_log(params.decision_log_limit),
         init_market_log(params.market_log_limit),
         init_search_coverage_log(params.search_log_limit),
@@ -69,13 +67,25 @@ function init_state(params::ModelParams=ModelParams())
         zeros(Float64, length(lots)),
         zeros(Float64, length(lots)),
         CommercialBidProposal[],
-        generate_io_matrix(params))
-    for _ in 1:params.initial_firms
-        found_firm!(state, [rand(rng, eachindex(state.workers))]; startup_capital=0.0, initial_cash=params.initial_firm_cash)
+        RofrEntry[],
+        generate_io_matrix(params),
+        Dict{Int,Int}())
+    # Investor founds one firm per output type; workers arrive via vacancy-driven immigration
+    for ftype in 1:params.firm_type_count
+        f = investor_found_firm!(state, ftype)
+        !isnothing(f) && (state.investor_firm_by_type[ftype] = f.id)
     end
     resolve_commercial_bids!(state)
-    initial_hire!(state)
-    initial_house!(state)
+    # Stagger initial leases so all initial firms don't expire on the same tick
+    for f in state.firms
+        cap_offset = rand(rng, 0:(params.capital_lease_term - 1))
+        f.capital_lease_ticks .= -cap_offset
+        f.process_lease_ticks .= -cap_offset
+        for (_, ticks_list) in f.commercial_units_by_lot
+            com_offset = rand(rng, 0:(params.commercial_lease_term - 1))
+            ticks_list .= -com_offset
+        end
+    end
     refresh_spatial_access!(state)
     return state
 end
@@ -88,18 +98,3 @@ function active_workers(state::ModelState)
     [state.workers[id] for id in state.active_worker_ids]
 end
 
-function initial_hire!(state::ModelState)
-    firms = active_firms(state)
-    isempty(firms) && return
-    for w in state.workers
-        f = firms[rand(state.rng, eachindex(firms))]
-        length(f.worker_ids) >= state.params.initial_hire_per_firm && continue
-        hire_worker!(state, w, f)
-    end
-end
-
-function initial_house!(state::ModelState)
-    for w in state.workers
-        housing_search!(housing_state(w), employment_state(w), w, state; force=true)
-    end
-end

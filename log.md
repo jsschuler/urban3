@@ -4,6 +4,15 @@
 
 ### 2026-04-22: Commercial rents blow up despite high commercial vacancy
 
+**Resolved 2026-04-28** by commercial rent market redesign (see Changes below).
+Previously, bid adjustment smoothing created residual elevated rent on vacated lots
+that decayed slowly (34 ticks to min), while high entry rates continuously re-inflated
+central lots. The redesign replaces smoothed adjustment with true per-unit market
+clearing and moves vacancy decay into the bid resolution phase so lots with no bidders
+decay immediately.
+
+
+
 Observed during a larger headless stress test:
 
 ```text
@@ -646,6 +655,138 @@ outputs/diagnostics/rent_gradient_io_250/
 outputs/diagnostics/lots_io_1000.csv
 outputs/diagnostics/rent_gradient_io_1000/
 ```
+
+### 2026-04-28: Commercial rent market redesign and asset rental model
+
+#### Motivation
+
+The commercial rent blowup (open issue 2026-04-22) was caused by two structural
+problems in the prior mechanism:
+
+1. **Smoothed bid adjustment**: `lot.commercial_rent` moved toward the winning bid
+   at rate α=0.30 rather than clearing at the bid. Lots vacated after being bid up
+   retained inflated rent for ~34 ticks (decay at 15%/tick from cap 250 to min 1.0),
+   pulling up mean commercial rent even while aggregate vacancy was 89%.
+
+2. **Vacancy decay applied unconditionally**: `developer_update!` cut rent on any
+   lot with vacant units, including lots that received bids that same tick. Rent
+   was simultaneously being pushed up by bids and cut by the developer rule.
+
+#### Commercial rent market redesign
+
+**Per-unit clearing**: each vacant unit at a lot clears at its own winning bid.
+If a lot has 3 vacant units and 5 bidders, unit 1 goes to bidder 1 at their bid,
+unit 2 to bidder 2 at their bid, and so on. Each firm tracks what it actually pays
+via `commercial_rent_paid_by_lot::Dict{Int, Vector{Float64}}`.
+
+`lot.commercial_rent` is now the **last clearing price** (highest bid received at
+the most recent auction) used only as a market signal by searching firms.
+
+**Vacancy decay moved to bid resolution**: lots that receive zero bids in a tick
+have their `commercial_rent` decayed. Lots that receive bids have their rent set
+to the highest bid. The commercial section of `developer_update!` is removed.
+
+**Removed parameters**: `commercial_bid_cap`, `commercial_rent_bid_adjustment_rate`.
+
+#### Commercial lease renewal
+
+Firms know the tick their lease expires. One tick before expiry, they run a
+commercial space search and submit a bid only if they find a lot that scores better
+than their current location. This uses the existing bid buffer — no new scheduler
+phase needed for the search itself.
+
+At expiry (`release_expired_leases!`, runs before `resolve_commercial_bids!`):
+- Units are freed and appear as vacant
+- Firms that did not submit a pre-expiry bid (preferred current location) receive
+  **right of first refusal**: they keep their unit at the highest competing bid,
+  or at their own bid if no competition. Affordability check: firm must have
+  `cash >= market_clearing_rent * lease_term` to exercise.
+- Firms that submitted a pre-expiry bid on a different lot and won: they relocate,
+  old unit goes to the normal auction pool.
+- Firms that submitted a pre-expiry bid on a different lot and lost: they fall back
+  to right of first refusal on their old lot (same affordability check).
+- Firms that fail the affordability check: become spaceless.
+
+Commercial leases use per-unit acquisition tick tracking:
+`commercial_units_by_lot::Dict{Int, Vector{Int}}` (was `Dict{Int, Int}`).
+
+#### Asset rental model (capital and processes)
+
+Capital and processes switch from one-time purchase to ongoing rental:
+
+- `capital_rental_rate::Float64` per unit per tick (replaces `capital_price`)
+- `process_rental_rate::Float64` per process per tick (replaces `process_price`)
+- `capital_lease_term::Int`, `process_lease_term::Int`: lease duration in ticks
+- Per-unit acquisition tick tracking: `capital_lease_ticks::Vector{Int}`,
+  `process_lease_ticks::Vector{Int}` on `Firm`
+
+Each tick, firms pay `capital_rental_rate × capital_units +
+process_rental_rate × process_count` deducted in `calculate_profits!`.
+
+#### Spaceless firm lifecycle
+
+A spaceless firm (lost all commercial space):
+1. Releases all workers immediately (marginal revenue = 0)
+2. Continues paying capital and process lease obligations until each expires
+3. Once the last lease expires: becomes a true shell (zero ongoing costs)
+4. Shell dissolution timer starts. After `shell_dissolution_ticks` ticks,
+   the firm distributes remaining `cash` to active owners proportionally via
+   `ownership_shares`, crediting each owner's `savings`. Inactive owners'
+   shares are forfeited.
+5. If `cash < 0` at any point before dissolution: normal bankruptcy.
+
+#### Scheduler change
+
+```
+entrepreneurship_phase!         # new entrant bids → buffer
+release_expired_leases!         # free expired units + handle ROFR
+resolve_commercial_bids!        # per-unit clearing + vacancy decay
+...
+firm_contraction_expansion!     # expansion bids → buffer (resolve next tick)
+...
+developer_update!               # residential only; commercial section removed
+```
+
+#### Files changed
+
+- `Types.jl`: `commercial_units_by_lot` → `Dict{Int, Vector{Int}}`; added
+  `commercial_rent_paid_by_lot::Dict{Int, Vector{Float64}}`;
+  `capital_lease_ticks::Vector{Int}`; `process_lease_ticks::Vector{Int}`;
+  `shell_ticks::Int`; removed `cash` capital/process one-time cost tracking
+- `Parameters.jl`: replaced `capital_price`/`process_price` with
+  `capital_rental_rate`/`process_rental_rate`/`capital_lease_term`/
+  `process_lease_term`; added `shell_dissolution_ticks`; removed
+  `commercial_bid_cap`, `commercial_rent_bid_adjustment_rate`
+- `Firms.jl`: `calculate_profits!` deducts per-unit rental costs and
+  actual rent paid; `hire_worker!` cash gate updated; `commercial_bid_amount`
+  uncapped; `resolve_commercial_bids!` per-unit clearing + vacancy decay +
+  ROFR logic; `release_expired_leases!` new function; spaceless handling in
+  `firm_contraction_expansion!`
+- `Developer.jl`: commercial section removed from `developer_update!`
+- `Scheduler.jl`: `release_expired_leases!` added before `resolve_commercial_bids!`
+- `Entrepreneurship.jl`: `found_firm!` updated for new asset fields
+- `State.jl`: initial firms get staggered lease offsets
+- `Metrics.jl`: `mean_commercial_rent` now averages over occupied lots only
+  (last clearing price); added `mean_capital_rental_cost`, `shell_firm_count`
+- `MarketLogging.jl`: log actual rent paid per firm per lot
+
+**Initial smoke test (seed=42, 24×24, 200 workers, 20 firms, entry_rate=2.0):**
+
+```text
+t=50:  firms=23, fill=1.00, com_rent=7.32,  res_rent=1.41, vac=0.96
+t=100: firms=33, fill=0.95, com_rent=8.94,  res_rent=1.37, vac=0.91
+t=150: firms=24, fill=1.00, com_rent=7.94,  res_rent=1.28, vac=0.95
+t=200: firms=30, fill=1.00, com_rent=12.46, res_rent=1.27, vac=0.92
+t=250: firms=34, fill=1.00, com_rent=16.09, res_rent=1.31, vac=0.88
+```
+
+Commercial rent now reflects genuine market-clearing prices on occupied lots only.
+High vacancy on a sparse grid is geometrically expected (576 lots, ~30 firms).
+No blowup — prior bug produced mean=104 at 89% vacancy; this is now resolved.
+
+Status: implemented.
+
+---
 
 ### 2026-04-23: Replaced location-value premium with endogenous mean-normalized bid scaling
 
@@ -3561,3 +3702,433 @@ at these parameter levels.
    risks cold-start collapse. Next sweep should include threshold as a dimension.
 
 Status: complete. Raw results in `outputs/feasibility_search.csv`.
+
+---
+
+## Session 2026-05-01: Investor agent, vacancy-driven immigration, dead code removal
+
+### Architectural decisions
+
+#### Removed: `outside_entry_rate` (unauthorized bootstrap hack)
+
+`outside_entry_rate` was present since the first commit as a fixed-rate worker injection
+with no economic rationale — workers arrived regardless of whether jobs or housing
+existed. It was identified as a placeholder hack that masked the cold-start problem
+rather than solving it. Removed from `Parameters.jl`; `outside_entry!` function removed
+from `Entrepreneurship.jl`; `outside_entries` field removed from `TickEvents` in
+`Types.jl`.
+
+#### Added: Investor agent
+
+A single highly-liquid patient investor agent who founds firms speculatively. Design:
+
+- Founds exactly **one firm per output type** at initialization (no worker-owners,
+  no savings draw — directly injected `investor_initial_firm_cash = 50_000`)
+- Portfolio is tracked in `ModelState.investor_firm_by_type::Dict{Int,Int}`
+- Each tick, `investor_phase!` checks: if any type's firm is inactive, re-founds it
+- Investor firms have `startup_pending = true` initially (cleared after `initial_hire_per_firm`
+  workers arrive via immigration), so the `labor_target` gate does not block early hiring
+
+This solves the cold-start problem cleanly: investor provides jobs from tick 1 without
+any unauthorized parameter hacks. The investor never exits and is effectively immortal.
+
+#### Changed: Vacancy-driven immigration
+
+Replaced the previous `immigration_phase!` (Harris-Todaro, then hiring-firm proxies,
+then total-vacancy proxies) with a direct vacancy-driven mechanism:
+
+```
+for each active firm f:
+    vac = labor_vacancies(state, f)          # mirrors hire_worker! gate
+    n ~ Poisson(immigration_rate_per_vacancy × vac)
+    for each immigrant: create worker, hire directly into f
+```
+
+Key property: immigrants enter **employed**, never unemployed. Immigration stops
+naturally when vacancies = 0. `immigration_rate_per_vacancy` changed from `0.0` to
+`0.5` (default). `labor_vacancies` helper added to `Workers.jl`.
+
+#### Changed: Zero initial workers
+
+`initial_workers` and `initial_firms` parameters removed. `init_state` starts with
+`Worker[]` and empty `active_worker_ids`. All workers enter via vacancy-driven
+immigration from tick 1 onward.
+
+#### Removed: Dead code
+
+- `initial_hire!(state)` — was called at init to seed firms; no longer needed
+- `initial_house!(state)` — was called at init to house initial workers; no longer needed
+- Both removed from `State.jl`
+
+### Test run results (500 ticks, default params)
+
+Bootstrap confirmed working: 0 workers at t=0, city grows via vacancy-driven
+immigration. All 6 investor firms (2 tier-1, 2 tier-2, 2 tier-3) remain active
+throughout.
+
+```
+t=50  pop=45  firms=6 emp=0.40 mean_w=9.22 inv_active=6 cum_imm=45
+t=100 pop=72  firms=7 emp=0.28 mean_w=8.18 inv_active=6 cum_imm=83
+t=200 pop=114 firms=7 emp=0.18 mean_w=5.56 inv_active=6 cum_imm=173
+t=300 pop=149 firms=7 emp=0.13 mean_w=3.98 inv_active=6 cum_imm=304
+t=400 pop=166 firms=8 emp=0.11 mean_w=3.61 inv_active=6 cum_imm=446
+t=500 pop=204 firms=7 emp=0.10 mean_w=2.47 inv_active=6 cum_imm=610
+```
+
+### Known issues identified (not yet fixed)
+
+#### Employment rate decline
+
+Employment falls from 100% → 10% over 500 ticks. Root cause: when a worker loses
+their job (firm exit or layoff), `worker_anchor_lot` returns `nothing` if they are
+also unhoused. With no anchor, job search samples ~10 lots from a 576-lot grid —
+roughly a 90% chance of missing all 6 firm lots per tick. Workers cannot re-employ
+and exit after `worker_exit_threshold` ticks, contributing to a growing unhoused/
+unemployed pool that cannot self-correct.
+
+#### Wage collapse
+
+Mean wage falls from $10 → $2.47. Mechanism: `posted_wage *= (1 - wage_cut_rate)`
+fires whenever `workers >= labor_target`. As employment rate declines and unemployed
+workers accumulate, firms remain fully staffed relative to target and cut wages
+continuously. This is downstream of the job search failure above.
+
+Status: bootstrap architecture complete; employment dynamics require job search fix
+for displaced workers.
+
+---
+
+## Session 2026-05-02: Employment dynamics fixes
+
+### Bugs fixed
+
+#### Bug: Immigration creates stranded unemployed workers
+
+`immigration_phase!` was adding the new worker to `state.workers` and
+`active_worker_ids` before calling `hire_worker!`. If `hire_worker!` rejected the
+hire (firm hit its labor_target mid-batch), the worker remained in the model as a
+permanently unemployed resident with no path to employment.
+
+Fix: only register the worker in `active_worker_ids` if `hire_worker!` succeeds;
+otherwise `pop!` the worker from `state.workers`. Workers now only enter the model
+if they are hired.
+
+#### Bug: B2C consumption market fails to clear at low firm counts
+
+`choose_good` used `adaptive_candidate_lots` (10–17 global samples from 576 lots)
+to find B2C firms. With only 2 B2C firms on the grid, 91% of workers missed both
+firms entirely each tick. Workers had income but could not spend it → B2C firms
+never sold out → no expansion signal → economy stuck at minimum size.
+
+Fix: after the adaptive spatial search, guarantee all active B2C firm lots are
+included in `sampled_lots` (`unique(vcat(sampled_lots, all_b2c_lots))`). Distance
+still penalizes far-away firms via utility; visibility is no longer dependent on
+the random sample hitting a sparse set of firm lots.
+
+#### Bug: `labor_target_for_wage_review` can never exceed current workers
+
+The function computes `target = ceil(target_sales / (capacity/workers))`. Since
+`target_sales ≤ committed_output ≤ capacity` always holds, this is algebraically
+equivalent to `ceil(workers)` = current workers. No vacancy can ever be generated
+for expansion — adding capital actually LOWERED the computed labor target by
+increasing capacity without changing target_sales.
+
+Fix: when the firm was sold out last tick (`realized_sales_this_tick >= committed_output`)
+and profitable (`profit_history[end] > 0`), apply a `sold_out_expansion_premium=0.50`
+multiplier to `target_sales`. This creates positive vacancies: a firm with 1 worker
+sold out gets target = ceil(1.5 × 8 / 8) = 2, opening a vacancy for growth.
+Note: `realized_sales_this_tick` and `committed_output` hold last tick's values
+during the job-search and wage-review phases (commit hasn't reset them yet), so the
+sold-out signal is correctly based on the previous tick.
+
+#### Bug: Wage floor at 1.0 allows wages below reservation wage
+
+`firm_reviews!` clipped posted wages to `max(1.0, ...)`. Wages fell to $1–3 over
+500 ticks, well below `outside_wage=8`. No rational worker should accept below their
+reservation wage.
+
+Fix: changed floor to `max(state.params.outside_wage, f.posted_wage)`. Wages now
+float between `outside_wage` (when firm has full staffing) and higher values
+(when firm has vacancies and can afford raises). This produces a stable equilibrium
+near `outside_wage`.
+
+### Calibration change: `outside_input_prices`
+
+Changed `outside_input_prices` from `[3.5, 5.0]` to `[8.0, 12.0]`.
+
+Root cause of change: on a 24×24 grid (576 lots) with only 2 T1 and 2 T2 firms,
+expected inter-firm taxicab distance ≈ 16 blocks. At the old prices, effective
+outside cost = 3.5 + 0.20×5 = 4.5 for T1 inputs. With T1 initial price 2.5–4.0
+and travel cost 0.20×distance, T1 was competitive only within 2–10 blocks.
+T2 firms almost always bought from outside; T1 had 0 sales; T1 contracted to
+1 worker after tick 12; supply chain never bootstrapped locally.
+
+New prices: T1 outside cost = 8.0 + 1.0 = 9.0; T2 outside cost = 12.0 + 1.0 = 13.0.
+Local supply is always cheaper than outside, forcing the B2B market to clear locally.
+The outside option now represents true import friction rather than a price-competitive
+alternative that undercuts local supply.
+
+### Test run results (500 ticks, default params)
+
+```
+t=50  pop=55   firms=7  emp=0.45 mean_w=9.17 inv_active=6 cum_imm=55
+t=100 pop=77   firms=7  emp=0.34 mean_w=8.68 inv_active=6 cum_imm=80
+t=150 pop=90   firms=8  emp=0.33 mean_w=8.65 inv_active=6 cum_imm=108
+t=200 pop=89   firms=11 emp=0.34 mean_w=8.61 inv_active=6 cum_imm=135
+t=250 pop=105  firms=10 emp=0.24 mean_w=8.46 inv_active=6 cum_imm=165
+t=300 pop=115  firms=11 emp=0.23 mean_w=8.75 inv_active=6 cum_imm=195
+t=350 pop=107  firms=9  emp=0.23 mean_w=8.46 inv_active=6 cum_imm=214
+t=400 pop=100  firms=12 emp=0.30 mean_w=8.66 inv_active=6 cum_imm=232
+t=450 pop=92   firms=10 emp=0.29 mean_w=8.64 inv_active=6 cum_imm=249
+t=500 pop=90   firms=9  emp=0.28 mean_w=8.51 inv_active=6 cum_imm=272
+```
+
+Wages stable at 8.46–8.75 (≈ outside_wage + small premium). Employment fluctuates
+23–45%; expected city income ≈ 0.28 × 8.5 + 0.72 × 8 = 8.14 ≈ outside_wage.
+This is approximate Harris-Todaro equilibrium. Population stable 90–115.
+All 6 investor firms remain active throughout.
+
+### Structural unemployment remains (~70%)
+
+The 28% employment rate is driven by limited firm capacity: ~9 active firms with
+2–5 workers each. Expansion is slow (12% probability per tick, capital constraints,
+Leontief input constraints). The outside_wage acts as a consumption subsidy for
+unemployed workers (they have income = outside_wage), enabling firms to sustain
+production even with low employment.
+
+Next steps: calibration sweep over `solo_found_prob`, `expansion_review_prob`,
+`sold_out_expansion_premium`, and `outside_wage` to identify parameter regions
+with higher employment rates.
+
+Status: model now produces economically coherent dynamics; ready for calibration.
+
+---
+
+## Session 2026-05-02: Calibration sweep (post-rewrite)
+
+### Sweep design
+
+Grid: `solo_found_prob` × `sold_out_expansion_premium` × `immigration_rate_per_vacancy`
+× `outside_wage` × seed = 3 × 3 × 3 × 3 × 3 = 243 configs, 500 ticks each,
+12 threads. All other parameters at current defaults (24×24 grid, 6 investor firms,
+`outside_input_prices=[8.0, 12.0]`, etc.).
+
+Feasibility criteria (tightened for new architecture):
+- `pop_500 >= 30`, `firms_500 >= 4`, `emp_rate_500 >= 0.25`, `mean_wage >= outside_wage`
+
+Results: 179 / 243 feasible (74%).
+
+### Key findings
+
+**Feasibility rate by solo_found_prob × expansion_premium:**
+```
+fp \ premium   0.25  0.50  1.00
+  0.010         0.78  0.74  0.59
+  0.020         0.59  0.74  0.85
+  0.050         0.85  0.78  0.70
+```
+No single combination dominates; `fp=0.050, premium=0.25` and `fp=0.020, premium=1.00`
+both achieve 85%. Highest failure rate is `fp=0.020, premium=0.25` (59%), suggesting
+moderate founding probability paired with weak expansion is the worst combination.
+
+**Employment rate by outside_wage × immigration_rate:**
+```
+ow \ imm_rate   0.25  0.50  1.00
+   6.0          0.31  0.28  0.24
+   8.0          0.28  0.28  0.27
+  10.0          0.34  0.32  0.31
+```
+- Higher `outside_wage` → higher employment. At ow=10.0, employment is 3–7pp higher
+  than ow=6.0 because the wage floor forces firms to pay more, which selects for
+  more productive/profitable firm configurations.
+- Lower `immigration_rate` → higher employment. At imm=0.25 workers arrive more
+  slowly, limiting oversupply and keeping employment rate elevated.
+
+**Wage stability:** wages track `outside_wage` closely (floor is binding):
+```
+fp \ ow          6.0    8.0   10.0
+  0.010          6.43   8.39  10.09
+  0.020          6.75   8.98  10.05
+  0.050          6.83   9.28  10.08
+```
+
+**Top 10 feasible configs by emp_rate_500:**
+```
+fp     premium imm   ow    seed  emp   wage  firms  pop
+0.010  1.00     0.25  10.0   42    0.49  10.15  15     102
+0.010  0.25     0.25  10.0   77    0.44  10.08  10     89
+0.020  0.25     0.25  6.0   42    0.43   7.23  11     63
+0.050  1.00     0.50  10.0   77    0.41  10.08  351    2927
+0.050  1.00     1.00  8.0   77    0.40   8.98  461    8910
+0.050  0.50     0.25  10.0   42    0.40  10.16  59     285
+0.020  1.00     0.50  6.0   12    0.39   7.66  13     94
+0.050  1.00     0.50  10.0   42    0.39  10.06  390    3439
+```
+Best employment: 49% at `fp=0.010, premium=1.00, imm=0.25, ow=10.0`.
+
+**Warning: `fp=0.050` with `premium=1.00` causes runaway growth** (pop=2927–8910,
+firms=351–461). While technically feasible, these represent explosive city-building
+not realistic for the model's intended scale. They pass the feasibility filter
+because emp_rate is still ≥25% on a large base.
+
+### Recommendations
+
+1. **Conservative target:** `fp=0.010–0.020`, `premium=0.50–1.00`, `imm=0.25`,
+   `ow=10.0`. Produces 39–49% employment with stable pop (75–102) and wages near
+   outside_wage.
+
+2. **Avoid `fp=0.050` with `premium ≥ 1.00`**: runaway firm founding + aggressive
+   expansion premium creates unrealistic city scale at 500 ticks.
+
+3. **`imm_rate=0.25` consistently outperforms 0.50 and 1.00** for employment rate:
+   fewer workers per vacancy → less unemployment accumulation.
+
+4. **`outside_wage=10.0` is best** for employment (matches `base_wage=10.0`,
+   so wage floor equals initial wage — firms stay near their initial wage rather
+   than cutting to the floor).
+
+5. **Next sweep dimension:** `io_matrix_density` was held fixed at default (0.5).
+   This should be varied in a follow-up sweep since it affects B2B input constraints.
+
+Raw results: `outputs/calibration_search.csv`.
+
+---
+
+## Session 2026-05-02 (addendum): Removed `immigration_rate_per_vacancy`
+
+`immigration_rate_per_vacancy` was a Poisson rate multiplier on the vacancy signal —
+`n ~ Poisson(rate × vac)`. This re-introduced a probabilistic throttle on a mechanism
+that by design should be purely vacancy-driven: if a firm has a vacancy, exactly one
+worker arrives per tick to fill it. The rate parameter was unauthorized (added during
+earlier iteration) and was removed.
+
+**Change:** `immigration_phase!` now iterates `vac` times per firm, creating and
+hiring exactly one worker per open slot. Removed `immigration_rate_per_vacancy`
+from `ModelParams`. Removed from calibration sweep.
+
+**New sweep: 81 configs (3 × 3 × 3 params × 3 seeds, 500 ticks).**
+
+Feasibility: 41 / 81 (51%).
+
+```
+Feasibility rate by solo_found_prob × sold_out_expansion_premium:
+fp \ premium   0.25  0.50  1.00
+  0.010         0.33  0.33  0.44
+  0.020         1.00  0.33  0.67
+  0.050         0.67  0.56  0.22
+
+Mean emp_rate_500 by outside_wage × solo_found_prob:
+ow \ fp        0.010  0.020  0.050
+   6.0           0.24   0.25   0.20
+   8.0           0.22   0.26   0.35
+  10.0           0.27   0.35   0.25
+```
+
+`fp=0.020, premium=0.25` achieves 100% feasibility across all outside_wage and seed
+combinations. `fp=0.050` with `premium=1.00` causes explosive growth (pop > 10,000,
+firms > 400) in most seeds — too aggressive.
+
+Best controlled configuration: `fp=0.010, premium=0.50, ow=10.0` → pop=169, firms=15,
+emp=37%, wage=10.04.
+
+Raw results: `outputs/calibration_search.csv`.
+
+---
+
+## Session 2026-05-02 (addendum 2): Calibration choice and gradient run
+
+**Chosen calibration for gradient analysis:**
+`solo_found_prob=0.020`, `sold_out_expansion_premium=0.25`, `outside_wage=10.0`
+
+Rationale: only combination achieving 100% feasibility across all three seeds.
+Conservative expansion premium avoids runaway growth. `outside_wage=10.0` = `base_wage`
+so the reservation wage equals the initial wage — firms must maintain wages near 10
+rather than drifting to a sub-market floor.
+
+**Next:** 3000-tick run collecting time-averaged per-lot spatial statistics
+(burn-in discarded through t=500) to identify emerging rent, density, and
+job-access gradients.
+
+---
+
+## Session 2026-05-02 (gradient run results)
+
+**Setup:** `fp=0.010, premium=0.50, ow=10.0, seed=42`, 3000 ticks, burn-in 500.
+Time-averaged per-lot stats over t=501–3000. Output: `outputs/gradient_run.csv`.
+
+### Gradient table (taxicab distance from grid centre)
+
+```
+dist_bin        lots   res_rent   com_rent   occ_res  occ_com  job_access
+[  0.0,  2.3)   12     1.016      1.002      0.074    0.0001   4.049
+[  2.3,  4.6)   28     1.017      1.121      0.132    0.012    4.120
+[  4.6,  6.9)   44     1.034      1.584      0.373    0.042    4.498
+[  6.9,  9.2)   96     1.043      2.078      0.780    0.068    4.601     ← peak
+[  9.2, 11.5)   84     1.025      1.676      0.493    0.045    3.838
+[ 11.5, 13.8)   92     1.012      1.264      0.209    0.023    2.936
+[ 13.8, 16.1)   108    1.010      1.093      0.082    0.011    2.002
+[ 16.1, 18.4)   52     1.004      1.011      0.023    0.001    0.993
+[ 18.4, 20.7)   36     1.002      1.000      0.012    0.000    0.498
+[ 20.7, 23.0)   24     1.001      1.000      0.003    0.000    0.188
+```
+
+### Key findings
+
+**Polycentric ring, not monocentric CBD.** All activity peaks at distance 6.9–9.2
+blocks, not at the geographic centre. Commercial rent peaks at 2.08 (vs 1.00 at
+centre and edges). Residential occupancy peaks at 0.78 (vs 0.07 at centre, 0.003
+at edge). The geographic centre is nearly empty — firms locate where commercial
+competition is weaker, creating a mid-distance ring rather than a central district.
+
+**Job access drives density and rent.** Correlations with job_access:
+- `job_access × res_rent  r = +0.831`
+- `job_access × occ_res   r = +0.748`
+- `job_access × com_rent  r = +0.790`
+- `job_access × occ_com   r = +0.832`
+
+Workers cluster near firms. Firms cluster near workers. The agglomeration mechanism
+is operating correctly — spatial sorting through job access is the primary force
+shaping the urban structure.
+
+**Weak residential rent gradient** (range 1.001–1.043). Developer investment is
+limited at this city scale. Residential rent barely responds to demand; the primary
+spatial signal is commercial rent (range 1.0–2.1). At larger city scales, the
+residential rent gradient should steepen.
+
+**Negative correlation with distance-from-centre** (all metrics): r = -0.16 to
+-0.28. Moderate, not strong, because the gradient is non-monotonic (ring shape
+produces an inverted-U over distance, which attenuates the linear correlation).
+
+**Wages stable throughout** (mean_w ≈ 10.0 throughout all 3000 ticks).
+Population fluctuates 118–260 over the run, consistent with the equilibrium
+dynamics of a small open city.
+
+Status: spatial sorting mechanism confirmed working. Next priority is developer
+investment calibration to strengthen the residential rent gradient.
+
+---
+
+## Session 2026-05-02 (spatial structure interpretation)
+
+The gradient is an **inverted-U over distance**, not a monocentric decline from
+centre. Commercial rent and residential occupancy both rise from the geographic
+centre outward to the activity ring (7–9 blocks), then fall from the ring to the
+periphery. The geographic centre is nearly empty (com_rent = 1.002, occ_res = 0.074).
+
+**Why the centre is empty:** there is no exogenous centripetal force in the model —
+no transit node, port, or pre-seeded CBD. Firms locate via commercial bidding on
+randomly available lots. The ring forms wherever agglomeration first took hold in
+the early ticks of this seed. Once firms cluster there, job access radiates outward
+from that ring, drawing workers to the adjacent residential lots. The geographic
+centre stays low because it offered no first-mover advantage.
+
+**This is seed-specific, not necessarily structural.** Different seeds may produce
+rings at different distances or even monocentric patterns depending on where the
+investor firms happened to land at t=0. A multi-seed gradient comparison would
+determine whether the ring shape is a robust feature of the agglomeration dynamics
+or a spatial accident.
+
+**Implication for future development:** to produce a reliable monocentric gradient,
+the model needs an exogenous centripetal force — e.g. lower commercial rent at the
+centre, a transit accessibility premium, or initial investor firm seeding at central
+lots. Without one, urban structure is purely endogenous and seed-dependent.

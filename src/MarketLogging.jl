@@ -9,15 +9,15 @@ function record_market_snapshot!(state::ModelState)
     vacant_residential_units = sum(vacant_residential(l) for l in state.lots)
     commercial_units = sum(l.commercial_units for l in state.lots)
     vacant_commercial_units = sum(vacant_commercial(l) for l in state.lots)
-    firm_job_vacancies = sum(max(0, state.params.max_workers_per_firm - length(f.worker_ids)) for f in firms; init=0)
-    firms_with_job_vacancies = count(f -> length(f.worker_ids) < state.params.max_workers_per_firm, firms)
+    firm_job_vacancies = 0
+    firms_with_job_vacancies = 0
     committed_output = sum(f.committed_output for f in firms; init=0)
     realized_sales = sum(f.realized_sales_this_tick for f in firms; init=0)
     unsold_output = sum(max(0, f.committed_output - f.realized_sales_this_tick) for f in firms; init=0)
     sold_out_firms = count(f -> f.committed_output > 0 && f.realized_sales_this_tick >= f.committed_output, firms)
     wages = [state.workers[wid].current_wage for wid in state.active_worker_ids if !isnothing(state.workers[wid].employer_id)]
     residential_rents = [l.residential_rent for l in state.lots]
-    commercial_rents = [l.commercial_rent for l in state.lots]
+    commercial_rents = [l.commercial_rent for l in state.lots if l.commercial_units > 0 && l.occupied_commercial > 0]
     goods_prices = [f.goods_price for f in firms]
 
     push!(state.market_log.records, MarketSnapshot(

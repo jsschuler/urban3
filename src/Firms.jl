@@ -73,7 +73,7 @@ function commit_intermediate_output!(state::ModelState)
     for f in active_firms(state)
         f.founded_tick == state.tick && continue
         is_b2c(state, f) && continue
-        isempty(required_input_types(state, f)) || continue   # skip tiers with input requirements
+        isempty(required_input_types(state, f)) || continue
         f.committed_output = production_capacity(state, f, state.params)
         f.realized_sales_this_tick = 0
     end
@@ -83,7 +83,7 @@ function commit_b2b_with_inputs!(state::ModelState)
     for f in active_firms(state)
         f.founded_tick == state.tick && continue
         is_b2c(state, f) && continue
-        isempty(required_input_types(state, f)) && continue   # skip tier 1 (no inputs)
+        isempty(required_input_types(state, f)) && continue
         cap = production_capacity(state, f, state.params)
         scale = leontief_input_scale(state, f)
         f.committed_output = floor(Int, scale * cap)
@@ -138,7 +138,7 @@ function production_capacity(state::ModelState, f::Firm, params::ModelParams)
     ft = params.firm_types[f.firm_type]
     labor = sum(effective_labor(state, wid) for wid in f.worker_ids; init=0.0)
     capital = f.capital_units
-    space = sum(values(f.commercial_units_by_lot))
+    space = sum(length(v) for v in values(f.commercial_units_by_lot); init=0)
     processes = max(1, f.process_count)
     labor == 0 || capital == 0 || space == 0 ? (return 0) : nothing
     total = 0.0
@@ -153,7 +153,8 @@ end
 
 function effective_sites(f::Firm, params::ModelParams)
     total = 0.0
-    for units in values(f.commercial_units_by_lot)
+    for ticks_list in values(f.commercial_units_by_lot)
+        units = length(ticks_list)
         total += units + floor(units / params.site_consolidation_k)
     end
     return max(total, 1.0)
@@ -162,7 +163,13 @@ end
 function hire_worker!(state::ModelState, w::Worker, f::Firm)
     !f.active && return false
     !isnothing(w.employer_id) && return false
-    length(f.worker_ids) >= state.params.max_workers_per_firm && return false
+    # Established firms don't hire beyond their demand-implied optimal headcount,
+    # which grows naturally as they expand capital and commercial space.
+    # Gate only activates once the firm has at least initial_hire_per_firm workers,
+    # so vacancy-driven immigration can seed each firm on startup.
+    if !f.startup_pending && length(f.worker_ids) >= state.params.initial_hire_per_firm
+        length(f.worker_ids) >= labor_target_for_wage_review(state, f) && return false
+    end
     current_payroll = sum(values(f.current_worker_wages); init=0.0)
     f.cash < (current_payroll + f.posted_wage) * state.params.min_hire_cash_ticks && return false
     push!(f.worker_ids, w.id)
@@ -190,17 +197,24 @@ function labor_target_for_wage_review(state::ModelState, f::Firm)
     else
         max(state.params.startup_production_target, f.committed_output)
     end
-
+    # When the firm was sold out last tick and profitable, apply an expansion premium
+    # so labor_target exceeds current workers and vacancies open for growth.
+    # realized_sales_this_tick and committed_output still hold last tick's values here
+    # because the commit phase hasn't run yet.
+    sold_out = f.realized_sales_this_tick >= f.committed_output && f.committed_output > 0
+    profitable = !isempty(f.profit_history) && f.profit_history[end] > 0
+    if sold_out && profitable && state.params.sold_out_expansion_premium > 0
+        target_sales = round(Int, target_sales * (1 + state.params.sold_out_expansion_premium))
+    end
     current_workers = length(f.worker_ids)
     current_capacity = production_capacity(state, f, state.params)
     if current_workers <= 0 || current_capacity <= 0
-        return clamp(1, 1, state.params.max_workers_per_firm)
+        return 1
     end
-
     output_per_worker = current_capacity / current_workers
-    output_per_worker <= 0 && return clamp(1, 1, state.params.max_workers_per_firm)
+    output_per_worker <= 0 && return 1
     target_workers = ceil(Int, target_sales / output_per_worker)
-    return clamp(max(1, target_workers), 1, state.params.max_workers_per_firm)
+    return max(1, target_workers)
 end
 
 function firm_reviews!(state::ModelState)
@@ -237,7 +251,7 @@ function firm_reviews!(state::ModelState)
             else
                 f.posted_wage *= (1 - state.params.wage_cut_rate)
             end
-            f.posted_wage = max(1.0, f.posted_wage)
+            f.posted_wage = max(state.params.outside_wage, f.posted_wage)
         end
     end
 end
@@ -245,7 +259,7 @@ end
 function commit_production!(state::ModelState)
     for f in active_firms(state)
         f.founded_tick == state.tick && continue
-        is_b2b(state, f) && continue  # already committed in commit_intermediate_output!
+        is_b2b(state, f) && continue
         cap = production_capacity(state, f, state.params)
         scale = leontief_input_scale(state, f)
         f.committed_output = floor(Int, scale * cap)
@@ -255,11 +269,14 @@ end
 
 function calculate_profits!(state::ModelState)
     for f in active_firms(state)
+        ft = state.params.firm_types[f.firm_type]
         revenue = f.realized_sales_this_tick * f.goods_price
         wages = sum(values(f.current_worker_wages); init=0.0)
-        rent = sum(state.lots[lid].commercial_rent * n for (lid, n) in f.commercial_units_by_lot; init=0.0)
+        commercial_rent = sum(sum(rents) for rents in values(f.commercial_rent_paid_by_lot); init=0.0)
+        capital_rental = f.capital_units * ft.capital_rental_rate
+        process_rental = f.process_count * ft.process_rental_rate
         input_costs = f.input_cost_this_tick
-        profit = revenue - wages - rent - input_costs
+        profit = revenue - wages - commercial_rent - capital_rental - process_rental - input_costs
         f.cash += profit
         push!(f.realized_sales_history, f.realized_sales_this_tick)
         push!(f.profit_history, profit)
@@ -273,12 +290,42 @@ end
 
 function firm_contraction_expansion!(state::ModelState)
     for f in copy(active_firms(state))
-        # Startup grace: do not liquidate or force contractions on birth tick.
         f.founded_tick == state.tick && continue
         if f.cash < 0
             liquidate_firm!(state, f)
             continue
         end
+
+        # Spaceless: release workers, let leases expire, count down to dissolution
+        if isempty(f.commercial_units_by_lot)
+            for wid in copy(f.worker_ids)
+                fire_worker!(state, f, wid)
+            end
+            filter!(t -> state.tick - t < state.params.capital_lease_term, f.capital_lease_ticks)
+            f.capital_units = length(f.capital_lease_ticks)
+            filter!(t -> state.tick - t < state.params.process_lease_term, f.process_lease_ticks)
+            f.process_count = length(f.process_lease_ticks)
+            if isempty(f.capital_lease_ticks) && isempty(f.process_lease_ticks)
+                f.shell_ticks += 1
+                if f.shell_ticks >= state.params.shell_dissolution_ticks
+                    dissolve_firm!(state, f)
+                end
+            end
+            continue
+        end
+
+        # Auto-renew expiring leases for firms with commercial space
+        n_capital = f.capital_units
+        filter!(t -> state.tick - t < state.params.capital_lease_term, f.capital_lease_ticks)
+        for _ in (length(f.capital_lease_ticks) + 1):n_capital
+            push!(f.capital_lease_ticks, state.tick)
+        end
+        n_process = f.process_count
+        filter!(t -> state.tick - t < state.params.process_lease_term, f.process_lease_ticks)
+        for _ in (length(f.process_lease_ticks) + 1):n_process
+            push!(f.process_lease_ticks, state.tick)
+        end
+
         if rand(state.rng) < state.params.contraction_review_prob &&
                 length(f.realized_sales_history) >= state.params.modal_sales_lookback
             recent = last(f.realized_sales_history, state.params.modal_sales_lookback)
@@ -288,21 +335,22 @@ function firm_contraction_expansion!(state::ModelState)
                 fire_worker!(state, f, highest)
             end
             while production_capacity(state, f, state.params) > target && f.capital_units > 1
+                popfirst!(f.capital_lease_ticks)
                 f.capital_units -= 1
             end
         end
+
         if rand(state.rng) < state.params.expansion_review_prob
             profitable = !isempty(f.profit_history) && f.profit_history[end] > 0
             sold_out = f.realized_sales_this_tick >= f.committed_output && f.committed_output > 0
             if profitable && sold_out
-                cap_cost = state.params.firm_types[f.firm_type].capital_price
-                if f.cash >= cap_cost
-                    f.cash -= cap_cost
+                ft = state.params.firm_types[f.firm_type]
+                if f.cash >= ft.capital_rental_rate * state.params.capital_lease_term
+                    push!(f.capital_lease_ticks, state.tick)
                     f.capital_units += 1
                     if rand(state.rng) < 0.25
-                        proc_cost = state.params.firm_types[f.firm_type].process_price
-                        if f.cash >= proc_cost
-                            f.cash -= proc_cost
+                        if f.cash >= ft.process_rental_rate * state.params.process_lease_term
+                            push!(f.process_lease_ticks, state.tick)
                             f.process_count += 1
                         end
                     end
@@ -310,6 +358,12 @@ function firm_contraction_expansion!(state::ModelState)
                 end
             end
         end
+
+        # Pre-expiry search: one tick before a commercial lease expires, look for better space
+        if has_expiring_commercial_lease(state, f)
+            commercial_space_search_if_better!(state, f)
+        end
+
         if f.capital_units == 0
             liquidate_firm!(state, f)
         end
@@ -321,10 +375,30 @@ function liquidate_firm!(state::ModelState, f::Firm)
     for wid in copy(f.worker_ids)
         fire_worker!(state, f, wid)
     end
-    for (lid, n) in f.commercial_units_by_lot
-        state.lots[lid].occupied_commercial = max(0, state.lots[lid].occupied_commercial - n)
+    for (lid, ticks_list) in f.commercial_units_by_lot
+        state.lots[lid].occupied_commercial =
+            max(0, state.lots[lid].occupied_commercial - length(ticks_list))
     end
     empty!(f.commercial_units_by_lot)
+    empty!(f.commercial_rent_paid_by_lot)
+    f.active = false
+    delete!(state.active_firm_ids, f.id)
+    state.events.firm_exits += 1
+end
+
+function dissolve_firm!(state::ModelState, f::Firm)
+    !f.active && return
+    if f.cash > 0
+        active_owners = [(wid, share) for (wid, share) in f.ownership_shares
+                         if wid <= length(state.workers) && wid in state.active_worker_ids]
+        total_active_share = sum(share for (_, share) in active_owners; init=0.0)
+        if total_active_share > 0
+            for (wid, share) in active_owners
+                state.workers[wid].savings += f.cash * (share / total_active_share)
+            end
+        end
+    end
+    f.cash = 0.0
     f.active = false
     delete!(state.active_firm_ids, f.id)
     state.events.firm_exits += 1
@@ -337,7 +411,7 @@ function commercial_location_score_fast(state::ModelState, f::Firm, lot_id::Int)
     w = tier == max_tier ? state.params.firm_consumer_access_weight : state.params.firm_b2b_consumer_access_weight
     return w * access +
         state.params.firm_job_access_weight * state.job_access_by_lot[lot_id] +
-        get(f.commercial_units_by_lot, lot_id, 0) -
+        length(get(f.commercial_units_by_lot, lot_id, Int[])) -
         state.lots[lot_id].commercial_rent
 end
 
@@ -367,13 +441,11 @@ function commercial_space_search!(state::ModelState, f::Firm)
         accept=(lots, stage) -> any(vacant_commercial(state.lots[lid]) > 0 for lid in lots),
     )
     chosen_lot_id = best_vacant_candidate_fast(state, f, candidates)
-
     if isnothing(chosen_lot_id)
         n = min(state.params.commercial_global_fallback_samples, length(state.lots))
         fallback = randperm(state.rng, length(state.lots))[1:n]
         chosen_lot_id = best_vacant_candidate_fast(state, f, fallback)
     end
-
     if !isnothing(chosen_lot_id)
         bid = commercial_bid_amount(state, f, chosen_lot_id)
         push!(state.commercial_bid_buffer, CommercialBidProposal(f.id, chosen_lot_id, bid))
@@ -381,17 +453,54 @@ function commercial_space_search!(state::ModelState, f::Firm)
         log_commercial_search_diagnostic!(state, f, anchor, candidates, chosen_lot_id)
         return true
     end
-
     log_commercial_space_search!(state, f, candidates, nothing)
     log_commercial_search_diagnostic!(state, f, anchor, candidates, nothing)
     return false
+end
+
+function has_expiring_commercial_lease(state::ModelState, f::Firm)
+    lt = state.params.commercial_lease_term
+    for ticks_list in values(f.commercial_units_by_lot)
+        for t in ticks_list
+            state.tick + 1 - t >= lt && return true
+        end
+    end
+    return false
+end
+
+function commercial_space_search_if_better!(state::ModelState, f::Firm)
+    isempty(f.commercial_units_by_lot) && return false
+    anchor = first(keys(f.commercial_units_by_lot))
+    current_score = commercial_location_score_fast(state, f, anchor)
+    candidates = adaptive_candidate_lots(
+        state,
+        anchor,
+        state.params.commercial_search;
+        domain=:commercial_space,
+        actor_kind=:firm,
+        actor_id=f.id,
+        accept=(lots, stage) -> any(vacant_commercial(state.lots[lid]) > 0 for lid in lots),
+    )
+    chosen_lot_id = best_vacant_candidate_fast(state, f, candidates)
+    if isnothing(chosen_lot_id)
+        n = min(state.params.commercial_global_fallback_samples, length(state.lots))
+        fallback = randperm(state.rng, length(state.lots))[1:n]
+        chosen_lot_id = best_vacant_candidate_fast(state, f, fallback)
+    end
+    isnothing(chosen_lot_id) && return false
+    chosen_score = commercial_location_score_fast(state, f, chosen_lot_id)
+    chosen_score <= current_score && return false
+    bid = commercial_bid_amount(state, f, chosen_lot_id)
+    push!(state.commercial_bid_buffer, CommercialBidProposal(f.id, chosen_lot_id, bid))
+    return true
 end
 
 function firm_anchor_consumer_access(state::ModelState, f::Firm)
     isempty(f.commercial_units_by_lot) && return mean(state.consumer_access_by_lot)
     total_units = 0
     weighted_access = 0.0
-    for (lot_id, units) in f.commercial_units_by_lot
+    for (lot_id, ticks_list) in f.commercial_units_by_lot
+        units = length(ticks_list)
         weighted_access += state.consumer_access_by_lot[lot_id] * units
         total_units += units
     end
@@ -412,8 +521,56 @@ function commercial_bid_amount(state::ModelState, f::Firm, lot_id::Int)
         state.params.commercial_bid_startup_expected_sales :
         max(1.0, recent_mean_sales(f, state.params.commercial_bid_recent_sales_lookback))
     access_scale = (access + 1.0) / (mean_access + 1.0)
-    raw_bid = state.params.commercial_bid_share * base_sales * access_scale * f.goods_price
-    return clamp(raw_bid, state.params.min_commercial_rent, state.params.commercial_bid_cap)
+    return max(
+        state.params.min_commercial_rent,
+        state.params.commercial_bid_share * base_sales * access_scale * f.goods_price,
+    )
+end
+
+function release_expired_leases!(state::ModelState)
+    lt = state.params.commercial_lease_term
+    for f in active_firms(state)
+        for (lot_id, ticks_list) in collect(f.commercial_units_by_lot)
+            rent_list = f.commercial_rent_paid_by_lot[lot_id]
+            n_expiring = count(t -> state.tick - t >= lt, ticks_list)
+            n_expiring == 0 && continue
+            state.lots[lot_id].occupied_commercial =
+                max(0, state.lots[lot_id].occupied_commercial - n_expiring)
+            expiry_indices = sort!([i for i in eachindex(ticks_list) if state.tick - ticks_list[i] >= lt])
+            for i in reverse(expiry_indices)
+                deleteat!(ticks_list, i)
+                deleteat!(rent_list, i)
+            end
+            if isempty(ticks_list)
+                delete!(f.commercial_units_by_lot, lot_id)
+                delete!(f.commercial_rent_paid_by_lot, lot_id)
+            end
+            push!(state.rofr_buffer, RofrEntry(f.id, lot_id, n_expiring))
+        end
+    end
+end
+
+function _award_units_to_bidders!(state::ModelState, lot::Lot,
+                                   max_units::Int,
+                                   sorted_bids::Vector{CommercialBidProposal},
+                                   won_firm_ids::Set{Int})
+    awarded = 0
+    for proposal in sorted_bids
+        awarded >= max_units && break
+        vacant_commercial(lot) <= 0 && break
+        firm = state.firms[proposal.firm_id]
+        firm.active || continue
+        push!(get!(firm.commercial_units_by_lot, proposal.lot_id, Int[]), state.tick)
+        push!(get!(firm.commercial_rent_paid_by_lot, proposal.lot_id, Float64[]), proposal.bid)
+        lot.occupied_commercial += 1
+        proposal.bid > lot.commercial_rent && (lot.commercial_rent = proposal.bid)
+        awarded += 1
+        push!(won_firm_ids, proposal.firm_id)
+        if firm.startup_pending
+            firm.startup_pending = false
+            state.events.firm_entries += 1
+        end
+    end
 end
 
 function finalize_pending_startup_firms!(state::ModelState)
@@ -433,12 +590,9 @@ function finalize_pending_startup_firms!(state::ModelState)
             bid = commercial_bid_amount(state, f, rescue_lot_id)
             lot = state.lots[rescue_lot_id]
             lot.occupied_commercial += 1
-            lot.commercial_rent = max(
-                state.params.min_commercial_rent,
-                (1 - state.params.commercial_rent_bid_adjustment_rate) * lot.commercial_rent +
-                    state.params.commercial_rent_bid_adjustment_rate * bid,
-            )
-            f.commercial_units_by_lot[rescue_lot_id] = get(f.commercial_units_by_lot, rescue_lot_id, 0) + 1
+            lot.commercial_rent = max(state.params.min_commercial_rent, bid)
+            push!(get!(f.commercial_units_by_lot, rescue_lot_id, Int[]), state.tick)
+            push!(get!(f.commercial_rent_paid_by_lot, rescue_lot_id, Float64[]), bid)
         end
         f.startup_pending = false
         state.events.firm_entries += 1
@@ -447,47 +601,72 @@ end
 
 function resolve_commercial_bids!(state::ModelState)
     bids = state.commercial_bid_buffer
-    if isempty(bids)
-        finalize_pending_startup_firms!(state)
-        return
+
+    rofr_by_lot = Dict{Int,Vector{RofrEntry}}()
+    for entry in state.rofr_buffer
+        push!(get!(rofr_by_lot, entry.lot_id, RofrEntry[]), entry)
     end
+    rofr_lot_ids = Set(keys(rofr_by_lot))
 
     bids_by_lot = Dict{Int,Vector{CommercialBidProposal}}()
     for proposal in bids
         push!(get!(bids_by_lot, proposal.lot_id, CommercialBidProposal[]), proposal)
     end
+    for (_, lot_bids) in bids_by_lot
+        sort!(lot_bids; by=b -> (-b.bid, b.firm_id))
+    end
 
+    # Pass 1: non-ROFR lots
+    won_firm_ids = Set{Int}()
     for (lot_id, lot_bids) in bids_by_lot
-        vacant_units = vacant_commercial(state.lots[lot_id])
-        vacant_units <= 0 && continue
-        sort!(lot_bids; by=proposal -> (-proposal.bid, proposal.firm_id))
-        award_count = min(vacant_units, length(lot_bids))
-        award_count == 0 && continue
-
-        winners = lot_bids[1:award_count]
+        lot_id in rofr_lot_ids && continue
         lot = state.lots[lot_id]
-        lot.occupied_commercial += award_count
+        vacant_units = vacant_commercial(lot)
+        vacant_units <= 0 && continue
+        _award_units_to_bidders!(state, lot, vacant_units, lot_bids, won_firm_ids)
+    end
 
-        winning_bids = Float64[]
-        for proposal in winners
-            push!(winning_bids, proposal.bid)
-            firm = state.firms[proposal.firm_id]
-            firm.active || continue
-            firm.commercial_units_by_lot[lot_id] = get(firm.commercial_units_by_lot, lot_id, 0) + 1
-            if firm.startup_pending
-                firm.startup_pending = false
-                state.events.firm_entries += 1
+    # Pass 2: ROFR lots
+    for (lot_id, entries) in rofr_by_lot
+        lot = state.lots[lot_id]
+        lot_bids = get(bids_by_lot, lot_id, CommercialBidProposal[])
+        for entry in entries
+            firm = state.firms[entry.firm_id]
+            if !firm.active || entry.firm_id in won_firm_ids
+                _award_units_to_bidders!(state, lot, entry.n_units, lot_bids, won_firm_ids)
+                continue
+            end
+            competing_bids = filter(b -> b.firm_id != entry.firm_id, lot_bids)
+            max_competing = isempty(competing_bids) ? 0.0 : competing_bids[1].bid
+            own_bid = commercial_bid_amount(state, firm, lot_id)
+            rofr_rent = max(max_competing, own_bid, state.params.min_commercial_rent)
+            if firm.cash >= rofr_rent * state.params.commercial_lease_term
+                lot.occupied_commercial += entry.n_units
+                for _ in 1:entry.n_units
+                    push!(get!(firm.commercial_units_by_lot, lot_id, Int[]), state.tick)
+                    push!(get!(firm.commercial_rent_paid_by_lot, lot_id, Float64[]), rofr_rent)
+                end
+                lot.commercial_rent = max(lot.commercial_rent, rofr_rent)
+                _award_units_to_bidders!(state, lot, vacant_commercial(lot), competing_bids, won_firm_ids)
+            else
+                _award_units_to_bidders!(state, lot, entry.n_units, lot_bids, won_firm_ids)
             end
         end
+    end
 
-        mean_bid = mean(winning_bids)
-        α = state.params.commercial_rent_bid_adjustment_rate
+    # Vacancy decay for lots that received no bids
+    lots_with_bids = Set(keys(bids_by_lot))
+    for lot in state.lots
+        lot.commercial_units == 0 && continue
+        lot.id in lots_with_bids && continue
+        vacant_commercial(lot) > 0 || continue
         lot.commercial_rent = max(
             state.params.min_commercial_rent,
-            (1 - α) * lot.commercial_rent + α * mean_bid,
+            lot.commercial_rent * (1 - state.params.commercial_vacancy_rent_cut_rate),
         )
     end
 
     empty!(state.commercial_bid_buffer)
+    empty!(state.rofr_buffer)
     finalize_pending_startup_firms!(state)
 end

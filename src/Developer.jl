@@ -9,13 +9,6 @@ function developer_update!(state::ModelState)
             lot.residential_rent = max(state.params.min_residential_rent, lot.residential_rent)
         end
 
-        if lot.commercial_units > 0
-            if vacant_commercial(lot) > 0
-                lot.commercial_rent *= (1 - state.params.commercial_vacancy_rent_cut_rate)
-            end
-            lot.commercial_rent = max(state.params.min_commercial_rent, lot.commercial_rent)
-        end
-
         if rand(state.rng) < state.params.residential_add_prob && vacant_residential(lot) == 0
             lot.residential_units += 1
             state.events.residential_units_added += 1
