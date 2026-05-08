@@ -1,0 +1,8 @@
+tick=250 elapsed=38.51 population=3521 employment=3329 firms=238 mean_com_rent=1.7133 unsold=170
+tick=500 elapsed=108.07 population=4041 employment=3631 firms=243 mean_com_rent=3.0034 unsold=912
+tick=750 elapsed=221.3 population=4547 employment=4017 firms=270 mean_com_rent=3.2095 unsold=1807
+tick=1000 elapsed=403.39 population=4999 employment=4359 firms=290 mean_com_rent=2.8713 unsold=2860
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for UrbanABM [df92e904-58d9-4e52-9967-f7e97dfb7028]
+│   exception = Required dependency Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics") failed to load from a cache file.
+└ @ Base loading.jl:2596
+DONE

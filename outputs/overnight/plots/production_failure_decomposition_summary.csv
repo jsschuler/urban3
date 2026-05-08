@@ -1,0 +1,14 @@
+metric,value
+global_realized_share_of_capacity,0.4955500015287758
+global_input_bottleneck_share_of_capacity,0.005473963056580781
+global_demand_shortfall_share_of_capacity,0.5003658029556123
+n_failures_with_window_data,547.0
+median_prefail_realized_share,0.045454545454545456
+median_prefail_input_gap_share,0.15625
+median_prefail_demand_gap_share,0.5
+median_prefail_input_scale,1.0
+median_prefail_soldout_rate,0.0
+n_severe_failures_with_window_data,28.0
+severe_median_prefail_realized_share,0.36003705371706374
+severe_median_prefail_input_gap_share,0.001206142317586889
+severe_median_prefail_demand_gap_share,0.6494677524231938

@@ -1,0 +1,56 @@
+seed=123 tick=100 elapsed=7.8 pop=3199 t1=93 t2=89 t3=104 fill_t2=0.803 fill_t3=0.262 so_t1=0.44 so_t2=0.47 p_t1=5.15 p_t2=5.5 p_t3=8.13 com_vac=0.708 com=1.236 res=3.081
+seed=123 tick=200 elapsed=17.1 pop=3399 t1=88 t2=97 t3=92 fill_t2=0.759 fill_t3=0.377 so_t1=0.49 so_t2=0.51 p_t1=4.72 p_t2=8.44 p_t3=14.99 com_vac=0.648 com=1.295 res=3.878
+seed=123 tick=300 elapsed=27.2 pop=3615 t1=85 t2=82 t3=80 fill_t2=0.796 fill_t3=0.512 so_t1=0.51 so_t2=0.5 p_t1=4.67 p_t2=16.59 p_t3=27.07 com_vac=0.609 com=1.636 res=4.832
+seed=123 tick=400 elapsed=38.0 pop=3823 t1=84 t2=90 t3=80 fill_t2=0.737 fill_t3=0.651 so_t1=0.6 so_t2=0.53 p_t1=4.8 p_t2=30.95 p_t3=37.84 com_vac=0.525 com=2.657 res=5.896
+seed=123 tick=500 elapsed=49.8 pop=4027 t1=80 t2=85 t3=90 fill_t2=0.661 fill_t3=0.652 so_t1=0.64 so_t2=0.66 p_t1=5.53 p_t2=61.67 p_t3=46.66 com_vac=0.453 com=3.842 res=6.586
+seed=123 tick=600 elapsed=62.8 pop=4217 t1=81 t2=88 t3=101 fill_t2=0.701 fill_t3=0.687 so_t1=0.62 so_t2=0.61 p_t1=7.51 p_t2=123.22 p_t3=55.92 com_vac=0.369 com=6.174 res=7.144
+seed=123 tick=700 elapsed=76.8 pop=4419 t1=90 t2=84 t3=101 fill_t2=0.7 fill_t3=0.579 so_t1=0.59 so_t2=0.68 p_t1=9.66 p_t2=233.68 p_t3=71.31 com_vac=0.331 com=7.905 res=6.999
+seed=123 tick=800 elapsed=91.3 pop=4624 t1=95 t2=89 t3=95 fill_t2=0.695 fill_t3=0.73 so_t1=0.53 so_t2=0.57 p_t1=11.28 p_t2=363.89 p_t3=89.29 com_vac=0.282 com=10.964 res=6.313
+seed=123 tick=900 elapsed=107.0 pop=4827 t1=92 t2=94 t3=109 fill_t2=0.674 fill_t3=0.737 so_t1=0.61 so_t2=0.62 p_t1=12.08 p_t2=489.07 p_t3=94.86 com_vac=0.263 com=11.842 res=5.49
+seed=123 tick=1000 elapsed=124.2 pop=5028 t1=99 t2=94 t3=114 fill_t2=0.708 fill_t3=0.742 so_t1=0.59 so_t2=0.64 p_t1=13.33 p_t2=771.74 p_t3=103.19 com_vac=0.242 com=15.388 res=5.165
+seed=123 tick=1100 elapsed=142.8 pop=5240 t1=102 t2=97 t3=123 fill_t2=0.699 fill_t3=0.732 so_t1=0.5 so_t2=0.67 p_t1=16.39 p_t2=1264.96 p_t3=111.14 com_vac=0.208 com=18.414 res=5.08
+seed=123 tick=1200 elapsed=162.8 pop=5442 t1=93 t2=99 t3=129 fill_t2=0.742 fill_t3=0.72 so_t1=0.62 so_t2=0.66 p_t1=22.92 p_t2=2095.49 p_t3=127.06 com_vac=0.214 com=19.223 res=5.022
+seed=123 tick=1300 elapsed=184.3 pop=5666 t1=97 t2=102 t3=138 fill_t2=0.669 fill_t3=0.701 so_t1=0.59 so_t2=0.7 p_t1=36.72 p_t2=3699.66 p_t3=130.78 com_vac=0.182 com=22.986 res=3.88
+seed=123 tick=1400 elapsed=207.7 pop=5871 t1=105 t2=110 t3=137 fill_t2=0.712 fill_t3=0.715 so_t1=0.57 so_t2=0.65 p_t1=47.34 p_t2=5834.13 p_t3=148.55 com_vac=0.17 com=21.997 res=4.667
+seed=123 tick=1500 elapsed=232.8 pop=6075 t1=102 t2=112 t3=145 fill_t2=0.748 fill_t3=0.725 so_t1=0.59 so_t2=0.59 p_t1=55.84 p_t2=8596.3 p_t3=154.07 com_vac=0.182 com=16.777 res=5.017
+seed=123 tick=1600 elapsed=260.1 pop=6283 t1=106 t2=114 t3=150 fill_t2=0.739 fill_t3=0.742 so_t1=0.54 so_t2=0.65 p_t1=51.61 p_t2=13134.05 p_t3=161.57 com_vac=0.148 com=19.682 res=5.375
+seed=123 tick=1700 elapsed=289.0 pop=6467 t1=102 t2=122 t3=154 fill_t2=0.772 fill_t3=0.709 so_t1=0.47 so_t2=0.62 p_t1=52.59 p_t2=15647.24 p_t3=170.86 com_vac=0.128 com=20.956 res=4.485
+seed=123 tick=1800 elapsed=319.3 pop=6663 t1=113 t2=122 t3=155 fill_t2=0.776 fill_t3=0.728 so_t1=0.52 so_t2=0.6 p_t1=52.41 p_t2=17407.0 p_t3=181.99 com_vac=0.157 com=15.516 res=4.828
+seed=123 tick=1900 elapsed=352.0 pop=6849 t1=112 t2=121 t3=166 fill_t2=0.751 fill_t3=0.728 so_t1=0.56 so_t2=0.63 p_t1=54.4 p_t2=19288.39 p_t3=179.27 com_vac=0.151 com=16.164 res=4.831
+seed=123 tick=2000 elapsed=387.2 pop=7048 t1=120 t2=125 t3=172 fill_t2=0.752 fill_t3=0.751 so_t1=0.53 so_t2=0.63 p_t1=52.95 p_t2=23555.02 p_t3=183.84 com_vac=0.138 com=17.758 res=4.784
+seed=123 tick=2100 elapsed=422.9 pop=7237 t1=109 t2=130 t3=174 fill_t2=0.73 fill_t3=0.748 so_t1=0.57 so_t2=0.61 p_t1=53.06 p_t2=27774.33 p_t3=194.66 com_vac=0.137 com=17.733 res=4.852
+seed=123 tick=2200 elapsed=460.8 pop=7446 t1=112 t2=133 t3=184 fill_t2=0.77 fill_t3=0.764 so_t1=0.59 so_t2=0.6 p_t1=60.62 p_t2=29541.94 p_t3=191.17 com_vac=0.131 com=17.77 res=4.781
+seed=123 tick=2300 elapsed=500.4 pop=7632 t1=121 t2=138 t3=187 fill_t2=0.778 fill_t3=0.756 so_t1=0.53 so_t2=0.6 p_t1=64.14 p_t2=28351.03 p_t3=188.3 com_vac=0.111 com=19.439 res=4.288
+seed=123 tick=2400 elapsed=542.1 pop=7816 t1=122 t2=138 t3=184 fill_t2=0.754 fill_t3=0.724 so_t1=0.52 so_t2=0.6 p_t1=65.35 p_t2=31629.17 p_t3=196.44 com_vac=0.086 com=23.099 res=4.022
+seed=123 tick=2500 elapsed=585.2 pop=7996 t1=119 t2=139 t3=195 fill_t2=0.777 fill_t3=0.765 so_t1=0.5 so_t2=0.62 p_t1=66.8 p_t2=34513.16 p_t3=193.64 com_vac=0.115 com=17.257 res=4.619
+
+[65470] signal 15: Terminated: 15
+in expression starting at none:9
+_growend! at ./array.jl:1115 [inlined]
+push! at ./array.jl:1261 [inlined]
+grow_to! at ./array.jl:890
+grow_to! at ./array.jl:868
+collect at ./array.jl:788 [inlined]
+active_firms at /Users/l25-n05917-res/ResearchCode/urban3/src/State.jl:82 [inlined]
+probabilistic_goods_choice at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:122
+choose_good at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:45
+consumption_phase! at /Users/l25-n05917-res/ResearchCode/urban3/src/Workers.jl:13
+step! at /Users/l25-n05917-res/ResearchCode/urban3/src/Scheduler.jl:22
+top-level scope at ./none:10
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:934
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:886
+ijl_toplevel_eval at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:952 [inlined]
+ijl_toplevel_eval_in at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/toplevel.c:994
+jlplt_ijl_toplevel_eval_in_28467.1 at /Applications/Julia-1.11.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+eval at ./boot.jl:430 [inlined]
+exec_options at ./client.jl:296
+_start at ./client.jl:531
+jfptr__start_73900.1 at /Applications/Julia-1.11.app/Contents/Resources/julia/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/./julia.h:2157 [inlined]
+true_main at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/jlapi.c:900
+jl_repl_entrypoint at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-XC9YQX9HH2.0/build/default-honeycrisp-XC9YQX9HH2-0/julialang/julia-release-1-dot-11/src/jlapi.c:1059
+unknown function (ip: 0x0)
+Allocations: 7000979531 (Pool: 7000978677; Big: 854); GC: 5559
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for UrbanABM [df92e904-58d9-4e52-9967-f7e97dfb7028]
+│   exception = Required dependency Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics") failed to load from a cache file.
+└ @ Base loading.jl:2596

@@ -1,0 +1,17 @@
+metric,value
+final_pop,163.0
+final_emp_rate,0.8588957055214724
+mean_emp_rate,0.813380356886316
+failures_total,563.0
+negative_cash_share,0.9946714031971581
+median_miss_plan_budget_units,-0.043825560111741955
+p10_miss_plan_budget_units,-0.3279388208317781
+p90_miss_plan_budget_units,-0.007291770895783582
+mean_abs_d_sales,7.545109021804361
+p95_abs_d_sales,22.0
+p99_abs_d_sales,75.03999999999905
+mean_abs_d_over_mean_sales,0.02399662182635144
+sales_cv,0.33990305549643857
+switch_rate_all_purchases,0.012018
+switch_events_total,6009.0
+preferred_inactive_switch_share,0.3045431852221667

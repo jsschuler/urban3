@@ -1,0 +1,6 @@
+cause_label,n_failures,share
+mixed_margin_failure,316,0.8165374677002584
+stockout_service_failure,37,0.09560723514211886
+input_bottleneck_stockout,27,0.06976744186046512
+demand_collapse,5,0.012919896640826873
+high_volatility_margin_thin,2,0.00516795865633075

@@ -1,0 +1,10 @@
+metric,value
+median_n_firms_per_tick,8.0
+median_unique_prices_per_tick,8.0
+median_unique_prices_r2_per_tick,8.0
+median_tie_share_r2_per_tick,0.0
+median_min_price_gap_per_tick,0.07771927846876547
+tier_ticks_ge3_count,2451.0
+tier_median_tie_share_r2,0.0
+tier_p90_tie_share_r2,0.0
+corr_tie_share_vs_low_sellthrough,0.003147911899556436

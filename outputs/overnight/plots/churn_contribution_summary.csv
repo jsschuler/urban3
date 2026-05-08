@@ -1,0 +1,13 @@
+metric,value
+mean_switch_rate,0.002537407643452629
+q90_switch_rate,0.0
+mean_abs_d_sales,8.4104
+mean_abs_d_sales_high_churn,8.4104
+mean_abs_d_sales_low_churn,8.289022298456262
+high_low_abs_d_sales_ratio,1.014643186756337
+corr_abs_d_sales_switch_rate,0.0750179252802771
+corr_abs_d_sales_fallback_rate,0.10991396830193227
+r2_baseline,0.045522119656851046
+r2_with_churn,0.04563759256825006
+r2_gain_churn,0.00011547291139901716
+approx_mean_swing_share_churn,3.514526991298888e-16

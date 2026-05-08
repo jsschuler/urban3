@@ -1,0 +1,10 @@
+metric,value
+n_output_increase_events,4151.0
+median_output_jump,3.0
+share_next_own_price_down,0.04649482052517466
+median_next_own_price_change,0.0
+share_next_sales_down,0.12045290291496025
+median_next_sales_change,0.0
+share_next_sellthrough_down,0.17128402794507347
+corr_output_jump_vs_next_price_change,-0.08964906919582326
+corr_output_jump_vs_next_sales_change,0.03770849261691431

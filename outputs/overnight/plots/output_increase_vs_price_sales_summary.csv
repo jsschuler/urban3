@@ -1,0 +1,10 @@
+metric,value
+n_output_increase_events,4151.0
+median_output_jump,3.0
+share_next_sellthrough_down,0.17128402794507347
+median_next_sellthrough_change,0.0
+share_next_sales_down,0.12045290291496025
+median_next_sales_change,0.0
+market_output_jump_ticks,168.0
+share_market_price_down_on_output_jump,0.27976190476190477
+median_market_price_change_on_output_jump,0.0

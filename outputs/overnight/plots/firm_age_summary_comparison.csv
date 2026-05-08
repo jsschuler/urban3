@@ -1,0 +1,8 @@
+metric,original,current
+mean_lifetime,259.6507936507937,72.4553415061296
+median_lifetime,20.5,7.0
+n_alive_censored,7.0,8.0
+n_exited,119.0,563.0
+n_firms,126.0,571.0
+p10_lifetime,3.0,3.0
+p90_lifetime,645.5,224.0

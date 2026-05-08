@@ -1,0 +1,16 @@
+metric,baseline_HEAD,current_monthly_planner,delta,delta_pct
+firm_failures_total,,483.0,,
+max_abs_d_sales,147.0,292.0,145.0,98.63945578231292
+mean_abs_d_sales,5.30626125225045,7.786157231446289,2.479895979195839,46.73527859458645
+median_profit_at_failure,,-46.90498280875994,,
+negative_cash_failures,,483.0,,
+negative_cash_share,,1.0,,
+p95_abs_d_sales,19.099999999999454,24.0,4.900000000000546,25.654450261783694
+p99_abs_d_sales,36.0,100.15999999999622,64.15999999999622,178.2222222222117
+preferred_inactive_switch_share,,0.3214636197953175,,
+preferred_inactive_switches,,2293.0,,
+preferred_over_budget_switch_share,,0.08706014299733632,,
+preferred_stockout_switch_share,,0.17075564278704614,,
+sales_cv,0.32309068803752833,0.3641691241358784,0.041078436098350046,12.714212330866873
+switch_events_total,,7133.0,,
+switch_rate_all_purchases,,0.014266,,

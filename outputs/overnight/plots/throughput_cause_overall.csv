@@ -1,0 +1,8 @@
+metric,value
+low_throughput_threshold,0.3
+all_active_ticks,39379.0
+low_throughput_ticks,14289.0
+low_throughput_share,0.36285837629193224
+mean_throughput_all,0.5421905337016782
+mean_throughput_low,0.08657682587591672
+median_feasible_fill_low,1.0

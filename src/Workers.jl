@@ -1,0 +1,552 @@
+function labor_vacancies(state::ModelState, f::Firm)
+    warmup_ticks = state.params.initial_planning_warmup_periods *
+                   max(1, state.params.planning_period_ticks)
+    in_startup = length(f.realized_sales_history) < warmup_ticks
+    if in_startup && length(f.worker_ids) < state.params.initial_hire_per_firm
+        return state.params.initial_hire_per_firm - length(f.worker_ids)
+    end
+    return max(0, desired_worker_target(state, f) - length(f.worker_ids))
+end
+
+function immigration_phase!(state::ModelState)
+    vacant_res = sum(l.residential_units - l.occupied_residential for l in state.lots)
+    unhoused = count(wid -> isnothing(state.workers[wid].dwelling_lot_id), state.active_worker_ids)
+    housing_headroom = vacant_res - unhoused
+    housing_headroom <= 0 && return
+
+    immigrants_this_tick = 0
+    for f in active_firms(state)
+        immigrants_this_tick >= housing_headroom && break
+        vac = labor_vacancies(state, f)
+        vac <= 0 && continue
+        for _ in 1:vac
+            immigrants_this_tick >= housing_headroom && break
+            new_id = length(state.workers) + 1
+            w = draw_worker(new_id, state.params, state.rng)
+            push!(state.workers, w)
+            if hire_worker!(state, w, f)
+                push!(state.active_worker_ids, new_id)
+                state.events.immigrants += 1
+                immigrants_this_tick += 1
+            else
+                pop!(state.workers)
+            end
+        end
+    end
+end
+
+function worker_income(w::Worker, params::ModelParams)
+    isnothing(w.employer_id) ? params.outside_wage : w.current_wage
+end
+
+function build_lot_firm_index(state::ModelState; b2c_only::Bool=false)
+    idx = Dict{Int,Vector{Int}}()
+    for fid in state.active_firm_ids
+        f = state.firms[fid]
+        b2c_only && !is_b2c(state, f) && continue
+        for lid in keys(f.commercial_units_by_lot)
+            push!(get!(idx, lid, Int[]), fid)
+        end
+    end
+    return idx
+end
+
+function consumption_phase!(state::ModelState)
+    remaining = Dict(f.id => f.committed_output for f in active_firms(state) if is_b2c(state, f))
+    lot_firm_idx = build_lot_firm_index(state; b2c_only=true)
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
+        income = worker_income(w, state.params)
+        income <= 0 && continue
+        rent = isnothing(w.dwelling_lot_id) ? 0.0 : state.lots[w.dwelling_lot_id].residential_rent
+        w.savings += income * w.savings_rate
+        budget = max(0.0, income * (1 - w.savings_rate) - rent)
+        while budget >= 0.25
+            choice, delivered_cost = choose_good(w, state, remaining, budget, lot_firm_idx)
+            if isnothing(choice)
+                budget = 0.0  # remaining budget spent on outside goods
+                break
+            end
+            f = state.firms[choice]
+            if !isempty(state.road_network.segments)
+                origin = worker_anchor_lot(w, state)
+                if !isnothing(origin)
+                    svc = nearest_firm_lot(f, origin, state)
+                    if !isnothing(svc)
+                        _, road_fee = effective_travel_cost(
+                            origin, svc,
+                            state.params.goods_travel_cost_per_block,
+                            state.params.road_goods_fee_per_unit, state,
+                        )
+                        state.road_network.revenue_this_tick += road_fee
+                    end
+                end
+            end
+            budget -= delivered_cost
+            remaining[f.id] -= 1
+            f.realized_sales_this_tick += 1
+            w.preferred_firm_by_type[f.firm_type] = f.id
+            w.last_delivered_cost_by_type[f.firm_type] = delivered_cost
+        end
+    end
+end
+
+function choose_good(w::Worker, state::ModelState, remaining::Dict{Int,Int}, budget::Float64, lot_firm_idx::Dict{Int,Vector{Int}})
+    period = max(1, state.params.goods_search_period)
+    review_tick = period == 1 || mod(state.tick + w.goods_search_offset, period) == 0
+    fallback_reason = Ref{Symbol}(:none)
+    habitual_choice = habitual_goods_choice(w, state, remaining, budget; force_review=review_tick, fallback_reason_out=fallback_reason)
+    if !isnothing(habitual_choice)
+        choice_id, choice_score, delivered_cost = habitual_choice
+        origin = worker_anchor_lot(w, state)
+        log_goods_search_diagnostic!(state, w, origin, budget, Int[], choice_id, choice_score)
+        log_consumer_switch!(state, w, choice_id, delivered_cost, budget, :habitual, fallback_reason[])
+        return choice_id, delivered_cost
+    end
+
+    origin = worker_anchor_lot(w, state)
+    sampled_lots = adaptive_candidate_lots(
+        state,
+        origin,
+        state.params.goods_search;
+        domain=:goods,
+        actor_kind=:worker,
+        actor_id=w.id,
+        accept=(lots, stage) -> affordable_sampled_goods_count(w, state, remaining, budget, lots, lot_firm_idx) >=
+            state.params.goods_search_target_affordable_candidates,
+    )
+    # Guarantee all active B2C firm lots are visible so the goods market clears
+    # even at low firm counts where spatial sampling alone would miss most firms.
+    all_b2c_lots = collect(keys(lot_firm_idx))
+    sampled_lots = isempty(all_b2c_lots) ? sampled_lots : unique(vcat(sampled_lots, all_b2c_lots))
+    choice_id, choice_score, delivered_cost = probabilistic_goods_choice(w, state, remaining, budget, sampled_lots, lot_firm_idx)
+    log_goods_search_diagnostic!(state, w, origin, budget, sampled_lots, choice_id, choice_score)
+    trigger = review_tick ? :scheduled_review : :fallback_search
+    log_consumer_switch!(state, w, choice_id, delivered_cost, budget, trigger, fallback_reason[])
+    return choice_id, delivered_cost
+end
+
+function log_consumer_switch!(
+    state::ModelState,
+    w::Worker,
+    chosen_firm_id::Union{Nothing,Int},
+    chosen_delivered_cost::Float64,
+    budget::Float64,
+    trigger::Symbol,
+    fallback_reason::Symbol,
+)
+    isnothing(chosen_firm_id) && return
+    chosen_firm_id > length(state.firms) && return
+    chosen = state.firms[chosen_firm_id]
+    ftype = chosen.firm_type
+    prev_fid = get(w.preferred_firm_by_type, ftype, nothing)
+    prev_cost = get(w.last_delivered_cost_by_type, ftype, NaN)
+    switched = !isnothing(prev_fid) && prev_fid != chosen_firm_id
+    push!(state.consumer_switch_log.records, ConsumerSwitchRecord(
+        state.tick,
+        w.id,
+        ftype,
+        prev_fid,
+        chosen_firm_id,
+        switched,
+        trigger,
+        fallback_reason,
+        prev_cost,
+        chosen_delivered_cost,
+        budget,
+    ))
+    overflow = length(state.consumer_switch_log.records) - state.consumer_switch_log.max_records
+    overflow > 0 && deleteat!(state.consumer_switch_log.records, 1:overflow)
+end
+
+function delivered_goods_utility(
+    w::Worker,
+    state::ModelState,
+    firm::Firm,
+    origin_lot_id::Union{Nothing,Int},
+    service_lot_id::Int,
+)
+    if isnothing(origin_lot_id)
+        return w.utility[firm.firm_type] - state.params.goods_price_weight * firm.goods_price
+    end
+    travel_cost, _ = effective_travel_cost(
+        origin_lot_id, service_lot_id,
+        state.params.goods_travel_cost_per_block, state.params.road_goods_fee_per_unit, state,
+    )
+    return w.utility[firm.firm_type] -
+        state.params.goods_price_weight * firm.goods_price -
+        state.params.goods_distance_weight * travel_cost
+end
+
+function delivered_goods_cost(
+    state::ModelState,
+    firm::Firm,
+    origin_lot_id::Union{Nothing,Int},
+    service_lot_id::Int,
+)
+    isnothing(origin_lot_id) && return firm.goods_price
+    travel_cost, _ = effective_travel_cost(
+        origin_lot_id, service_lot_id,
+        state.params.goods_travel_cost_per_block, state.params.road_goods_fee_per_unit, state,
+    )
+    return firm.goods_price + travel_cost
+end
+
+function habitual_goods_choice(
+    w::Worker,
+    state::ModelState,
+    remaining::Dict{Int,Int},
+    budget::Float64,
+    ;
+    force_review::Bool=false,
+    fallback_reason_out::Base.RefValue{Symbol}=Ref(:none),
+)
+    if force_review
+        fallback_reason_out[] = :scheduled_review
+        return nothing
+    end
+
+    preferred_pairs = collect(w.preferred_firm_by_type)
+    if isempty(preferred_pairs)
+        fallback_reason_out[] = :no_preference
+        return nothing
+    end
+
+    sort!(preferred_pairs; by=pair -> w.utility[pair.first], rev=true)
+    origin_lot_id = worker_anchor_lot(w, state)
+
+    for (firm_type, firm_id) in preferred_pairs
+        if firm_id > length(state.firms)
+            fallback_reason_out[] = :preferred_missing
+            continue
+        end
+        firm = state.firms[firm_id]
+        if !firm.active
+            fallback_reason_out[] = :preferred_inactive
+            continue
+        end
+        if get(remaining, firm.id, 0) <= 0
+            fallback_reason_out[] = :preferred_stockout
+            continue
+        end
+        if isempty(firm.commercial_units_by_lot)
+            fallback_reason_out[] = :preferred_no_location
+            continue
+        end
+        service_lot_id = isnothing(origin_lot_id) ? first(keys(firm.commercial_units_by_lot)) :
+            nearest_firm_lot(firm, origin_lot_id, state)
+        if isnothing(service_lot_id)
+            fallback_reason_out[] = :preferred_unreachable
+            continue
+        end
+        delivered_cost = delivered_goods_cost(state, firm, origin_lot_id, service_lot_id)
+        if delivered_cost > budget
+            fallback_reason_out[] = :preferred_over_budget
+            continue
+        end
+        previous_cost = get(w.last_delivered_cost_by_type, firm_type, delivered_cost)
+        if delivered_cost > previous_cost * (1 + state.params.shopping_price_increase_tolerance)
+            fallback_reason_out[] = :preferred_price_jump
+            continue
+        end
+        utility = delivered_goods_utility(w, state, firm, origin_lot_id, service_lot_id)
+        return firm.id, utility, delivered_cost
+    end
+
+    return nothing
+end
+
+function probabilistic_goods_choice(
+    w::Worker,
+    state::ModelState,
+    remaining::Dict{Int,Int},
+    budget::Float64,
+    sampled_lots::Vector{Int},
+    lot_firm_idx::Dict{Int,Vector{Int}},
+)
+    origin_lot_id = worker_anchor_lot(w, state)
+    seen_firms = Set{Int}()
+    candidate_ids = Int[]
+    candidate_scores = Float64[]
+    candidate_costs = Float64[]
+
+    for lid in sampled_lots
+        haskey(lot_firm_idx, lid) || continue
+        for fid in lot_firm_idx[lid]
+            fid in seen_firms && continue
+            push!(seen_firms, fid)
+            get(remaining, fid, 0) <= 0 && continue
+            f = state.firms[fid]
+            service_lot_id = isnothing(origin_lot_id) ? lid :
+                nearest_firm_lot(f, origin_lot_id, state)
+            isnothing(service_lot_id) && continue
+            delivered_cost = delivered_goods_cost(state, f, origin_lot_id, service_lot_id)
+            delivered_cost > budget && continue
+            utility = delivered_goods_utility(w, state, f, origin_lot_id, service_lot_id)
+            push!(candidate_ids, fid)
+            push!(candidate_scores, utility)
+            push!(candidate_costs, delivered_cost)
+        end
+    end
+
+    isempty(candidate_ids) && return nothing, -Inf, Inf
+
+    max_score = maximum(candidate_scores)
+    weights = [exp(state.params.goods_choice_sensitivity * (score - max_score)) for score in candidate_scores]
+    total_weight = sum(weights)
+    total_weight <= 0 && return nothing, -Inf, Inf
+
+    draw = rand(state.rng) * total_weight
+    cumulative = 0.0
+    for (i, weight) in enumerate(weights)
+        cumulative += weight
+        if draw <= cumulative
+            return candidate_ids[i], candidate_scores[i], candidate_costs[i]
+        end
+    end
+
+    return candidate_ids[end], candidate_scores[end], candidate_costs[end]
+end
+
+function affordable_sampled_goods_count(
+    w::Worker,
+    state::ModelState,
+    remaining::Dict{Int,Int},
+    budget::Float64,
+    sampled_lots::Vector{Int},
+    lot_firm_idx::Dict{Int,Vector{Int}},
+)
+    origin_lot_id = worker_anchor_lot(w, state)
+    seen_firms = Set{Int}()
+    count = 0
+    for lid in sampled_lots
+        haskey(lot_firm_idx, lid) || continue
+        for fid in lot_firm_idx[lid]
+            fid in seen_firms && continue
+            push!(seen_firms, fid)
+            get(remaining, fid, 0) <= 0 && continue
+            f = state.firms[fid]
+            service_lot_id = isnothing(origin_lot_id) ? lid :
+                nearest_firm_lot(f, origin_lot_id, state)
+            isnothing(service_lot_id) && continue
+            travel_cost = isnothing(origin_lot_id) ? 0.0 :
+                effective_travel_cost(origin_lot_id, service_lot_id,
+                    state.params.goods_travel_cost_per_block, state.params.road_goods_fee_per_unit, state)[1]
+            f.goods_price + travel_cost > budget && continue
+            count += 1
+        end
+    end
+    return count
+end
+
+function worker_job_search!(state::ModelState)
+    lot_firm_idx = build_lot_firm_index(state)
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
+        prob = isnothing(w.employer_id) ? state.params.job_search_prob_unemployed : state.params.job_search_prob_employed
+        rand(state.rng) > prob && continue
+        job_search!(employment_state(w), housing_state(w), w, state, lot_firm_idx)
+    end
+end
+
+function job_search!(::Unemployed, ::Unhoused, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    # No spatial anchor: evaluate all active firms directly rather than sampling blind
+    best_id = nothing
+    best_wage = -Inf
+    for fid in state.active_firm_ids
+        f = state.firms[fid]
+        isempty(f.commercial_units_by_lot) && continue
+        labor_vacancies(state, f) <= 0 && continue
+        f.posted_wage > best_wage || continue
+        best_wage = f.posted_wage
+        best_id = fid
+    end
+    isnothing(best_id) && return false
+    return hire_worker!(state, w, state.firms[best_id])
+end
+
+function job_search!(::Unemployed, ::Housed, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    return apply_best_job!(w, state, lot_firm_idx)
+end
+
+function job_search!(::Employed, ::Unhoused, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    return false
+end
+
+function job_search!(::Employed, ::Housed, w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    w.moved_home_this_tick && return false
+    current = w.current_wage
+    best = best_job(w, state, lot_firm_idx)
+    isnothing(best) && return false
+    f = state.firms[best]
+    if f.posted_wage > current * 1.08
+        old = state.firms[w.employer_id]
+        fire_worker!(state, old, w.id)
+        return hire_worker!(state, w, f)
+    end
+    return false
+end
+
+function apply_best_job!(w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    best = best_job(w, state, lot_firm_idx)
+    isnothing(best) && return false
+    return hire_worker!(state, w, state.firms[best])
+end
+
+function best_job(w::Worker, state::ModelState, lot_firm_idx::Dict{Int,Vector{Int}})
+    origin = worker_anchor_lot(w, state)
+    sampled = candidate_lots(
+        state,
+        origin,
+        state.params.job_search;
+        domain=:job,
+        actor_kind=:worker,
+        actor_id=w.id,
+    )
+    # Guarantee all lots of firms with open vacancies are in the sample (mirrors goods search guarantee)
+    for fid in state.active_firm_ids
+        labor_vacancies(state, state.firms[fid]) <= 0 && continue
+        for lid in keys(state.firms[fid].commercial_units_by_lot)
+            push!(sampled, lid)
+        end
+    end
+    sampled_set = Set(sampled)
+    seen_firms = Set{Int}()
+    best_id = nothing
+    best_net = -Inf
+    for lid in sampled
+        haskey(lot_firm_idx, lid) || continue
+        for fid in lot_firm_idx[lid]
+            fid in seen_firms && continue
+            push!(seen_firms, fid)
+            f = state.firms[fid]
+            labor_vacancies(state, f) <= 0 && continue
+            nearest = nearest_firm_lot(f, origin, state)
+            isnothing(nearest) && continue
+            nearest in sampled_set || continue
+            commute = isnothing(w.dwelling_lot_id) ? 0.0 :
+                effective_travel_cost(w.dwelling_lot_id, nearest,
+                    state.params.commute_cost_per_block, state.params.road_commute_fee_per_unit, state)[1]
+            net = f.posted_wage - commute
+            if net > best_net
+                best_net = net
+                best_id = fid
+            end
+        end
+    end
+    return best_id
+end
+
+function worker_housing_search!(state::ModelState)
+    for wid in state.active_worker_ids
+        w = state.workers[wid]
+        rand(state.rng) > state.params.housing_review_prob && continue
+        housing_search!(housing_state(w), employment_state(w), w, state)
+    end
+end
+
+function worker_exit!(state::ModelState)
+    for wid in collect(state.active_worker_ids)
+        w = state.workers[wid]
+        if isnothing(w.employer_id)
+            w.inactive_ticks += 1
+            if w.inactive_ticks >= state.params.worker_exit_threshold
+                !isnothing(w.dwelling_lot_id) && vacate_home!(w, state)
+                delete!(state.active_worker_ids, wid)
+            end
+        else
+            w.inactive_ticks = 0
+        end
+    end
+end
+
+function housing_search!(::Unhoused, ::Unemployed, w::Worker, state::ModelState; force=false)
+    return move_to_best_home!(w, state; current_required=false)
+end
+
+function housing_search!(::Unhoused, ::Employed, w::Worker, state::ModelState; force=false)
+    return move_to_best_home!(w, state; current_required=false)
+end
+
+function housing_search!(::Housed, ::Unemployed, w::Worker, state::ModelState; force=false)
+    if !housing_affordable(w, state, w.dwelling_lot_id)
+        vacate_home!(w, state)
+    end
+    return false
+end
+
+function housing_search!(::Housed, ::Employed, w::Worker, state::ModelState; force=false)
+    w.moved_job_this_tick && !force && return false
+    if !housing_affordable(w, state, w.dwelling_lot_id)
+        vacate_home!(w, state)
+        return move_to_best_home!(w, state; current_required=false)
+    end
+    return move_to_best_home!(w, state; current_required=true)
+end
+
+function housing_affordable(w::Worker, state::ModelState, lot_id::Union{Nothing,Int})
+    isnothing(lot_id) && return false
+    lot = state.lots[lot_id]
+    if isnothing(w.employer_id)
+        income = state.params.outside_wage
+        commute = state.params.job_access_radius * state.params.commute_cost_per_block
+    else
+        income = w.current_wage
+        job_lot = nearest_firm_lot(state.firms[w.employer_id], lot_id, state)
+        commute = isnothing(job_lot) ? 0.0 :
+            effective_travel_cost(lot_id, job_lot,
+                state.params.commute_cost_per_block, state.params.road_commute_fee_per_unit, state)[1]
+    end
+    disposable = max(0.0, income * (1 - w.savings_rate) - commute)
+    return lot.residential_rent <= disposable * state.params.housing_budget_share
+end
+
+function home_utility(w::Worker, state::ModelState, lot_id::Int)
+    lot = state.lots[lot_id]
+    job_lot = isnothing(w.employer_id) ? nothing : nearest_firm_lot(state.firms[w.employer_id], lot_id, state)
+    commute_cost = isnothing(job_lot) ? 0.0 :
+        effective_travel_cost(lot_id, job_lot,
+            state.params.commute_cost_per_block, state.params.road_commute_fee_per_unit, state)[1]
+    job_access = state.job_access_by_lot[lot_id]
+    return -lot.residential_rent -
+        commute_cost +
+        0.05 * lot_height(lot) +
+        state.params.housing_job_access_weight * job_access
+end
+
+function move_to_best_home!(w::Worker, state::ModelState; current_required::Bool)
+    origin = worker_anchor_lot(w, state)
+    candidates = candidate_lots(
+        state,
+        origin,
+        state.params.housing_search;
+        domain=:housing,
+        actor_kind=:worker,
+        actor_id=w.id,
+    )
+    best_lot = nothing
+    best_u = current_required && !isnothing(w.dwelling_lot_id) ? home_utility(w, state, w.dwelling_lot_id) : -Inf
+    for lid in candidates
+        lot = state.lots[lid]
+        vacant_residential(lot) <= 0 && continue
+        housing_affordable(w, state, lid) || continue
+        u = home_utility(w, state, lid)
+        if u > best_u
+            best_u = u
+            best_lot = lid
+        end
+    end
+    isnothing(best_lot) && return false
+    !isnothing(w.dwelling_lot_id) && vacate_home!(w, state)
+    state.lots[best_lot].occupied_residential += 1
+    w.dwelling_lot_id = best_lot
+    w.moved_home_this_tick = true
+    return true
+end
+
+function vacate_home!(w::Worker, state::ModelState)
+    isnothing(w.dwelling_lot_id) && return
+    lot = state.lots[w.dwelling_lot_id]
+    lot.occupied_residential = max(0, lot.occupied_residential - 1)
+    w.dwelling_lot_id = nothing
+end

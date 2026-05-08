@@ -1,0 +1,3 @@
+trigger,ticks_with_trigger,mean_abs_d_sales_when_present,mean_abs_d_sales_when_absent,present_absent_ratio,corr_count_vs_abs_d_sales
+fallback_search,222,11.608108108108109,8.261825031393888,1.4050295260428258,0.07001112073473958
+scheduled_review,210,10.914285714285715,8.30062630480167,1.3148749640701352,0.014126295794168464

@@ -1,0 +1,5 @@
+"domain","events","lots_covered","lot_coverage_share","raw_draws","unique_draws","mean_raw_draws_per_event","mean_unique_lots_per_event"
+"commercial_space",11,137,0.951388888888889,528,463,48,42.0909090909091
+"goods",5724,144,1,54241,52282,9.47606568832984,9.13382250174703
+"housing",814,144,1,9724,9309,11.9459459459459,11.4361179361179
+"job",1065,144,1,12003,11542,11.2704225352113,10.837558685446

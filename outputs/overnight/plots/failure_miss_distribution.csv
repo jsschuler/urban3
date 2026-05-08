@@ -1,0 +1,10 @@
+metric,value
+n_failures,522.0
+median_miss_cash,-140.33604717881752
+p10_miss_cash,-301.84654231940567
+p90_miss_cash,-120.5507761581541
+median_miss_totalcost_units,-0.04031877072603003
+p10_miss_totalcost_units,-0.34751295157520373
+p90_miss_totalcost_units,-0.007898574477552373
+median_ticks_since_plan,6.0
+p90_ticks_since_plan,38.0

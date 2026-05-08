@@ -1,0 +1,8 @@
+metric,value
+switch_events_total,1409.0
+switch_ticks,336.0
+switch_ticks_share,0.0672
+scheduled_review_events,25918.0
+scheduled_review_ticks_share,0.4564
+scheduled_review_tick_count_cv,1.5460213011902253
+scheduled_review_lag20_autocorr,0.8256630047804978

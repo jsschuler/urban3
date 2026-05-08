@@ -1,0 +1,66 @@
+MC calibration: 2000 samples × 750 ticks × 2 seeds
+Threads: 16
+  200 / 2000
+  400 / 2000
+  600 / 2000
+  800 / 2000
+  1000 / 2000
+  1200 / 2000
+  1400 / 2000
+  1600 / 2000
+  1800 / 2000
+  2000 / 2000
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for UrbanABM [df92e904-58d9-4e52-9967-f7e97dfb7028]
+│   exception = Required dependency Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics") failed to load from a cache file.
+└ @ Base loading.jl:2596
+
+Done.
+  Growing (>2×):   123 / 2000  (6.2%)
+  Grid expanded:   0 / 2000  (0.0%)
+  Results → outputs/mc_calibration.csv
+
+Top 20 by score  (max=7.5):
+prod   hire  sfp       gtc     bid    res_occ  soexp    score  pop×  emp%  firms  exp
+6.74   7     0.01113   0.0237  0.104  0.697    0.932     5.40   4.2×    70%   Y     N
+4.17   5     0.01734   0.1054  0.067  0.790    0.706     5.40   4.9×    70%   Y     N
+6.13   5     0.02548   0.0279  0.063  0.652    0.578     5.33   5.7×    66%   Y     N
+7.11   7     0.02296   0.0607  0.076  0.749    0.780     5.31   4.6×    65%   Y     N
+7.47   5     0.02950   0.0707  0.091  0.628    0.896     5.27   4.6×    63%   Y     N
+5.39   8     0.02869   0.0332  0.087  0.756    0.351     5.24   5.0×    62%   Y     N
+5.60   6     0.02005   0.0626  0.080  0.883    0.484     5.06   3.6×    68%   Y     N
+7.96   3     0.01939   0.0397  0.132  0.765    0.898     5.02   3.4×    73%   Y     N
+3.77   4     0.01051   0.1839  0.083  0.878    0.457     4.98   3.4×    71%   Y     N
+5.20   3     0.00350   0.0925  0.070  0.614    0.968     4.91   3.4×    66%   Y     N
+5.60   7     0.01356   0.0291  0.069  0.728    0.755     4.91   3.4×    68%   Y     N
+7.21   7     0.01702   0.0486  0.098  0.784    0.729     4.87   3.2×    73%   Y     N
+7.40   5     0.01313   0.1934  0.086  0.528    0.816     4.78   3.4×    62%   Y     N
+7.29   5     0.01160   0.0959  0.073  0.879    0.904     4.74   3.3×    62%   Y     N
+4.35   3     0.01424   0.1382  0.072  0.872    0.781     4.69   2.9×    77%   Y     N
+7.56   8     0.02378   0.1301  0.195  0.721    0.750     4.67   3.0×    70%   Y     N
+6.18   6     0.02082   0.0232  0.184  0.824    0.691     4.61   3.0×    68%   Y     N
+4.57   3     0.01847   0.0366  0.056  0.501    0.891     4.61   3.0×    66%   Y     N
+6.08   7     0.02701   0.1982  0.066  0.734    0.832     4.60   3.1×    65%   Y     N
+6.08   8     0.02247   0.0318  0.092  0.647    0.984     4.59   3.1×    65%   Y     N
+
+Mean score by productivity bin:
+  [3, 4): mean_score=2.28  growth_rate=  2%  n=418
+  [4, 5): mean_score=2.69  growth_rate=  7%  n=399
+  [5, 6): mean_score=2.84  growth_rate=  8%  n=382
+  [6, 7): mean_score=2.89  growth_rate=  8%  n=383
+  [7, 8): mean_score=2.73  growth_rate=  6%  n=418
+
+Mean score by initial_hire_per_firm:
+  hire=3: mean_score=2.48  growth_rate=  4%  n=327
+  hire=4: mean_score=2.58  growth_rate=  4%  n=334
+  hire=5: mean_score=2.67  growth_rate=  6%  n=333
+  hire=6: mean_score=2.71  growth_rate=  5%  n=337
+  hire=7: mean_score=2.82  growth_rate=  8%  n=340
+  hire=8: mean_score=2.79  growth_rate= 11%  n=329
+
+Growth rate by (productivity_bin × initial_hire):
+prod\hire    k=3   k=4   k=5   k=6   k=7   k=8 
+[3,4)      4%    3%    1%    0%    2%    2%
+[4,5)      4%    7%    8%    7%    7%    7%
+[5,6)      5%    3%   10%   11%   10%   11%
+[6,7)      3%    3%    5%    6%   11%   21%
+[7,8)      3%    3%    5%    3%    8%   13%

@@ -1,0 +1,10 @@
+metric,value
+failures_total,522.0
+last_plan_passed_share,0.9789272030651341
+last_plan_failed_share,0.0210727969348659
+median_last_plan_projected_end_cash,120.0
+median_last_plan_total_cost,0.0
+median_last_plan_buffer,0.0
+median_ticks_since_last_plan,6.0
+matched_plan_record_share,0.25862068965517243
+forecast_miss_share_among_failures,0.975095785440613

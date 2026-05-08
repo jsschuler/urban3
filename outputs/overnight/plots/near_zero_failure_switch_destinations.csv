@@ -1,0 +1,7 @@
+failed_firm_id,failed_firm_type,failure_tick,switches_away_window,unique_destination_firms,top_dest_firm_ids,top_dest_types,trigger_mix,fallback_mix
+267,6,2868,1,1,263:1,6:1,fallback_search:1,preferred_price_jump:1
+430,6,4328,1,1,440:1,6:1,scheduled_review:1,scheduled_review:1
+457,6,4435,32,3,464:20;461:10;466:2,6:32,scheduled_review:25;fallback_search:7,scheduled_review:25;preferred_over_budget:4;preferred_inactive:1;preferred_stockout:1;preferred_price_jump:1
+464,6,4502,4,1,461:4,6:4,scheduled_review:4,scheduled_review:4
+519,6,4861,2,2,530:1;533:1,6:2,fallback_search:2,preferred_stockout:2
+536,5,4923,14,1,522:14,5:14,scheduled_review:11;fallback_search:3,scheduled_review:11;preferred_stockout:2;preferred_over_budget:1

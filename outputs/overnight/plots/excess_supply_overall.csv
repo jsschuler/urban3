@@ -1,0 +1,5 @@
+metric,value
+mean_excess_share_all_tiers,0.5282048010784834
+median_excess_share_all_tiers,0.5897435897435898
+share_tier_ticks_throughput_lt_0_3,0.4035322451164035
+share_tier_ticks_throughput_lt_0_5,0.5497390955311747

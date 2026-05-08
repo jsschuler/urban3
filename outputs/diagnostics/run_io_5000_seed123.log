@@ -1,0 +1,9 @@
+seed=123 tick=1000 elapsed=216.4 pop=4928 firms=291 fill=0.795 com_rent=4.673 res_rent=5.254
+seed=123 tick=2000 elapsed=884.1 pop=6948 firms=408 fill=0.84 com_rent=5.482 res_rent=4.443
+seed=123 tick=3000 elapsed=2017.8 pop=8943 firms=510 fill=0.887 com_rent=8.893 res_rent=4.935
+seed=123 tick=4000 elapsed=3551.6 pop=11002 firms=617 fill=0.881 com_rent=7.43 res_rent=3.866
+seed=123 tick=5000 elapsed=5606.6 pop=13001 firms=709 fill=0.888 com_rent=2.299 res_rent=2.529
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for UrbanABM [df92e904-58d9-4e52-9967-f7e97dfb7028]
+│   exception = Required dependency Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics") failed to load from a cache file.
+└ @ Base loading.jl:2596
+seed=123 DONE

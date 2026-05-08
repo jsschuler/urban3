@@ -1,0 +1,30 @@
+Starting 10000-tick overnight run  (grid starts 12×12)
+t=100    EXPANSION 12×12 → 16×16  lots 144 → 256  CBD=(9,8)
+t=500    pop=141   emp= 55%  firms=6    grid=16×16  roads=20   max_com_rent= 30.68  (2s)
+t=1000   pop=104   emp= 40%  firms=6    grid=16×16  roads=40   max_com_rent=  7.09  (4s)
+t=1500   pop=98    emp= 68%  firms=6    grid=16×16  roads=50   max_com_rent= 40.93  (11s)
+t=2000   pop=128   emp= 50%  firms=8    grid=16×16  roads=50   max_com_rent= 32.53  (18s)
+t=2500   pop=343   emp= 65%  firms=7    grid=16×16  roads=50   max_com_rent= 24.13  (26s)
+t=2505   EXPANSION 16×16 → 20×20  lots 256 → 400  CBD=(14,10)
+t=3000   pop=148   emp= 54%  firms=7    grid=20×20  roads=50   max_com_rent= 28.54  (35s)
+t=3500   pop=133   emp= 49%  firms=7    grid=20×20  roads=50   max_com_rent= 13.03  (42s)
+t=4000   pop=136   emp= 64%  firms=7    grid=20×20  roads=50   max_com_rent= 21.11  (48s)
+t=4500   pop=110   emp= 57%  firms=6    grid=20×20  roads=50   max_com_rent= 19.43  (55s)
+t=5000   pop=113   emp= 65%  firms=7    grid=20×20  roads=50   max_com_rent=  8.03  (61s)
+t=5500   pop=159   emp= 49%  firms=6    grid=20×20  roads=50   max_com_rent= 15.77  (68s)
+t=6000   pop=219   emp= 71%  firms=7    grid=20×20  roads=50   max_com_rent= 17.31  (78s)
+t=6500   pop=100   emp= 72%  firms=6    grid=20×20  roads=50   max_com_rent= 18.29  (85s)
+t=7000   pop=117   emp= 91%  firms=7    grid=20×20  roads=50   max_com_rent= 22.56  (90s)
+t=7500   pop=97    emp= 44%  firms=6    grid=20×20  roads=50   max_com_rent= 16.41  (97s)
+t=8000   pop=202   emp= 80%  firms=7    grid=20×20  roads=50   max_com_rent= 38.74  (103s)
+t=8500   pop=115   emp= 52%  firms=8    grid=20×20  roads=50   max_com_rent= 21.97  (109s)
+t=9000   pop=107   emp= 64%  firms=6    grid=20×20  roads=50   max_com_rent= 36.56  (115s)
+t=9500   pop=97    emp= 65%  firms=7    grid=20×20  roads=50   max_com_rent= 24.62  (123s)
+t=10000  pop=123   emp= 52%  firms=8    grid=20×20  roads=50   max_com_rent= 16.82  (129s)
+
+Done in 2.1 minutes. Outputs in outputs/overnight/
+  market_log.csv    — per-tick aggregate time series
+  lots_tNNNNN.csv   — lot-level spatial snapshots every 500 ticks
+  lots_final.csv    — final lot state
+  roads_final.csv   — final road network
+  expansions.csv    — one row per grid expansion event

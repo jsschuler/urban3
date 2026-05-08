@@ -1,0 +1,3 @@
+tick=100 elapsed=9.78 population=3202 employment=2958 unhoused=694 firms=272 mean_res_rent=3.331 mean_com_rent=1.518
+tick=500 elapsed=103.21 population=3999 employment=3624 unhoused=377 firms=234 mean_res_rent=5.488 mean_com_rent=3.263
+tick=1000 elapsed=401.87 population=5042 employment=4394 unhoused=673 firms=305 mean_res_rent=3.253 mean_com_rent=4.287

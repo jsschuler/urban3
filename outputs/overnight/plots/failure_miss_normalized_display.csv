@@ -1,0 +1,6 @@
+metric,value
+n_failures,522.0
+median_miss_cash,-140.33604717881752
+median_miss_plan_budget_units,-0.03505980063133046
+p10_miss_plan_budget_units,-0.3021851752827858
+p90_miss_plan_budget_units,-0.006868325632654236

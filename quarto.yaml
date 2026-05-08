@@ -1,0 +1,17 @@
+---
+title: "Ethics Throughout the Data Science Cycle"
+subtitle: "Chapter 8 — Principles of Data Science"
+author: "Instructor"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: fade
+    incremental: false
+    chalkboard: false
+    preview-links: auto
+execute:
+  echo: false
+  warning: false
+  message: false
+---

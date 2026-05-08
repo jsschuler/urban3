@@ -1,0 +1,37 @@
+┌ Warning: The call to compilecache failed to create a usable precompiled cache file for UrbanABM [df92e904-58d9-4e52-9967-f7e97dfb7028]
+│   exception = Required dependency Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics") failed to load from a cache file.
+└ @ Base loading.jl:2596
+Starting 5000-tick overnight run  (grid starts 12×12)
+t=250    pop=49    emp=100%  firms=6    grid=12×12  roads=33   max_com_rent=  1.00  (0s)
+t=500    pop=74    emp= 43%  firms=7    grid=12×12  roads=50   max_com_rent=  1.00  (2s)
+t=750    pop=105   emp= 30%  firms=12   grid=12×12  roads=50   max_com_rent=  1.29  (6s)
+t=1000   pop=118   emp= 33%  firms=9    grid=12×12  roads=50   max_com_rent=  1.21  (11s)
+t=1250   pop=128   emp= 27%  firms=13   grid=12×12  roads=50   max_com_rent=  1.00  (17s)
+t=1500   pop=167   emp= 32%  firms=13   grid=12×12  roads=50   max_com_rent=  1.04  (26s)
+t=1750   pop=183   emp= 26%  firms=22   grid=12×12  roads=50   max_com_rent=  1.00  (37s)
+t=2000   pop=200   emp= 25%  firms=23   grid=12×12  roads=50   max_com_rent=  1.00  (50s)
+t=2250   pop=208   emp= 25%  firms=25   grid=12×12  roads=50   max_com_rent=  1.00  (67s)
+t=2500   pop=252   emp= 29%  firms=26   grid=12×12  roads=50   max_com_rent=  1.00  (90s)
+t=2750   pop=297   emp= 29%  firms=33   grid=12×12  roads=50   max_com_rent=  1.39  (121s)
+t=3000   pop=330   emp= 25%  firms=29   grid=12×12  roads=50   max_com_rent=  1.00  (156s)
+t=3250   pop=367   emp= 25%  firms=35   grid=12×12  roads=50   max_com_rent=  1.00  (190s)
+t=3500   pop=350   emp= 23%  firms=28   grid=12×12  roads=50   max_com_rent=  1.39  (235s)
+t=3750   pop=378   emp= 24%  firms=36   grid=12×12  roads=50   max_com_rent=  1.39  (281s)
+t=4000   pop=435   emp= 24%  firms=39   grid=12×12  roads=50   max_com_rent=  1.39  (332s)
+t=4250   pop=494   emp= 29%  firms=46   grid=12×12  roads=50   max_com_rent=  1.73  (393s)
+t=4500   pop=521   emp= 26%  firms=44   grid=12×12  roads=50   max_com_rent=  1.73  (465s)
+t=4750   pop=531   emp= 21%  firms=35   grid=12×12  roads=50   max_com_rent=  1.08  (545s)
+t=5000   pop=536   emp= 26%  firms=44   grid=12×12  roads=50   max_com_rent=  1.88  (613s)
+
+Done in 10.2 minutes. Outputs in outputs/overnight/
+  market_log.csv    — per-tick aggregate time series
+  market_log_deltas.csv — per-tick additive deltas for aggregate state reconstruction
+  firm_failures.csv — event log for firm exits with pre-exit economics and reason
+  consumer_switch_log.csv — per-purchase provider switching with trigger and fallback reason
+  monthly_plan_log.csv — per-plan budget pass/fail and projected cash/buffer metrics
+  tick_events.csv   — per-tick event counts (entries/exits/hires/layoffs/build/immigration)
+  lots_tNNNNN.csv   — lot-level spatial snapshots every 500 ticks
+  lots_final.csv    — final lot state
+  roads_final.csv   — final road network
+  expansions.csv    — one row per grid expansion event
+  rent_gradient.csv — mean commercial/residential rent by Manhattan distance from CBD, every 500 ticks
